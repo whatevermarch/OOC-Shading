@@ -148,6 +148,8 @@ protected:
 	void flushCmdBuffer(VkCommandBuffer cmdBuffer);
 	VkShaderModule loadSPIRVShader(std::string filePath);
 
+	void createDrawCmdBuffer();
+
 private:
 	VkSurfaceKHR surface;
 
@@ -169,7 +171,7 @@ private:
 	
 	void createSwapChain();
 	void createCommandPool();
-	void createDrawCmdBuffer();
+	
 	void createStandardSemaphores();
 	void createPipelineCache();
 

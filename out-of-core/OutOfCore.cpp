@@ -120,7 +120,8 @@ private:
 		}
 	}
 
-	void migrateTexture() {
+	void migrateTexture()
+	{
 		if (isSwapped) return;
 
 		VkCommandBuffer cmdBuffer = createCmdBuffer(true);
@@ -163,9 +164,20 @@ private:
 		// descSet need to be in prompt state ( finish used by previous frame ) in order to update.
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
+		rebuildCommandBuffers();
+
 		isSwapped = true;
 
 		std::cout << "Texture Swapped!" << std::endl;
+	}
+
+	void rebuildCommandBuffers()
+	{
+		vkFreeCommandBuffers(device, cmdPool, static_cast<uint32_t>(drawCmdBuffers.size()), drawCmdBuffers.data());
+
+		VkBase::createDrawCmdBuffer();
+
+		buildCommandBuffers();
 	}
 
 	void loadAsset() 
