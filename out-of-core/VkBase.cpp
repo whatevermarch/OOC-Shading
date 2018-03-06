@@ -79,6 +79,7 @@ void VkBase::prepare()
 	createDrawCmdBuffer();
 	createStandardSemaphores();
 	createPipelineCache();
+	setupResourceManager();
 }
 
 void VkBase::renderLoop()
@@ -338,7 +339,6 @@ void VkBase::initVulkan()
 	setupSurface();
 	setupDebugCallback();
 	setupDevice();
-	setupResourceManager();
 }
 
 void VkBase::setupInstance()
@@ -476,7 +476,7 @@ void VkBase::setupDevice()
 
 void VkBase::setupResourceManager()
 {
-	resMan = new ResourceManager(physicalDevice, device);
+	resMan = new ResourceManager(physicalDevice, device, cmdPool, stdQueues.graphic);
 }
 
 void VkBase::createStandardSemaphores()

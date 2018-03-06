@@ -41,8 +41,8 @@ public:
 		vkDestroyBuffer(device, uniformBufferVS.buffer, nullptr);
 		vkFreeMemory(device, uniformBufferVS.memory, nullptr);
 		*/
-		vkDestroyImageView(device, secondaryTexture.view, nullptr);
-		resMan->destroyImage(secondaryTexture.image, secondaryTexture.allocation);
+		//vkDestroyImageView(device, secondaryTexture.view, nullptr);
+		//resMan->destroyImage(secondaryTexture.image, secondaryTexture.allocation);
 		
 		vkDestroySampler(device, sampleTexture.sampler, nullptr);
 		vkDestroyImageView(device, sampleTexture.view, nullptr);
@@ -90,8 +90,6 @@ private:
 	// On Host
 	Texture secondaryTexture;
 
-	bool isSwapped = false;
-
 	VkFence swapComplete;
 
 	VkDescriptorSetLayout descSetLayout;
@@ -122,17 +120,10 @@ private:
 
 	void migrateTexture()
 	{
-		if (isSwapped) return;
+		resMan->migrateTexture(sampleTexture);
 
-		VkCommandBuffer cmdBuffer = createCmdBuffer(true);
-
-		resMan->migrateTexture(cmdBuffer, sampleTexture, &secondaryTexture);
-
-		flushCmdBuffer(cmdBuffer);
-
-		createImageView(secondaryTexture.image, VK_FORMAT_R8G8B8A8_UNORM, &secondaryTexture.view);
-
-		secondaryTexture.sampler = sampleTexture.sampler;
+		vkDestroyImageView(device, sampleTexture.view, nullptr);
+		createImageView(sampleTexture.image, VK_FORMAT_R8G8B8A8_UNORM, &sampleTexture.view);
 
 		VkDescriptorBufferInfo bufferInfo = {};
 		bufferInfo.buffer = uniformBufferVS.buffer;
@@ -141,8 +132,8 @@ private:
 
 		VkDescriptorImageInfo imageInfo = {};
 		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		imageInfo.imageView = secondaryTexture.view; // change point
-		imageInfo.sampler = secondaryTexture.sampler; // change point
+		imageInfo.imageView = sampleTexture.view; // secondaryTexture.view; // change point
+		imageInfo.sampler = sampleTexture.sampler; // secondaryTexture.sampler; // change point
 
 		std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
 		// Binding 0 : Uniform buffer
@@ -164,20 +155,12 @@ private:
 		// descSet need to be in prompt state ( finish used by previous frame ) in order to update.
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
-		rebuildCommandBuffers();
-
-		isSwapped = true;
-
-		std::cout << "Texture Swapped!" << std::endl;
-	}
-
-	void rebuildCommandBuffers()
-	{
-		vkFreeCommandBuffers(device, cmdPool, static_cast<uint32_t>(drawCmdBuffers.size()), drawCmdBuffers.data());
-
-		VkBase::createDrawCmdBuffer();
+		for (short i = 0; i < static_cast<short>(drawCmdBuffers.size()); i++)
+			vkResetCommandBuffer(drawCmdBuffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 
 		buildCommandBuffers();
+
+		std::cout << "Migration Completed! New Image is " << sampleTexture.image << std::endl;
 	}
 
 	void loadAsset() 
@@ -216,17 +199,6 @@ private:
 			nullptr
 		);
 
-		// vertex buffer
-		/*
-		createBuffer(vertexBufferSize, false, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &stagingBuffers.vertices.buffer, &stagingBuffers.vertices.memory);
-
-		VK_CHECK_RESULT(vkMapMemory(device, stagingBuffers.vertices.memory, 0, vertexBufferSize, 0, &data));
-		memcpy(data, vertices.data(), vertexBufferSize);
-		vkUnmapMemory(device, stagingBuffers.vertices.memory);
-
-		createBuffer(vertexBufferSize, true, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &vertexBuffer.buffer, &vertexBuffer.memory);
-		*/
-
 		//use resman for ib
 		resMan->createBuffer(
 			VMA_MEMORY_USAGE_CPU_ONLY,
@@ -247,17 +219,7 @@ private:
 			&indexBuffer.allocation, 
 			nullptr
 		);
-
-		// do for index buffer too
-		/*
-		createBuffer(indexBufferSize, false, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &stagingBuffers.indices.buffer, &stagingBuffers.indices.memory);
-
-		VK_CHECK_RESULT(vkMapMemory(device, stagingBuffers.indices.memory, 0, indexBufferSize, 0, &data));
-		memcpy(data, indices.data(), indexBufferSize);
-		vkUnmapMemory(device, stagingBuffers.indices.memory);
-
-		createBuffer(indexBufferSize, true, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &indexBuffer.buffer, &indexBuffer.memory);
-		*/
+		
 		// texture too
 		int texWidth, texHeight, texChannels;
 		stbi_uc* pixels = stbi_load(sampleTextureFile, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -267,7 +229,6 @@ private:
 			throw std::runtime_error("failed to load texture image!");
 		}
 
-		//createBuffer(imageSize, false, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &stagingBuffers.sampleTex.buffer, &stagingBuffers.sampleTex.memory);
 		resMan->createBuffer(
 			VMA_MEMORY_USAGE_CPU_ONLY,
 			imageSize,
@@ -277,17 +238,13 @@ private:
 			&data
 		);
 
-		//vkMapMemory(device, stagingBuffers.sampleTex.memory, 0, imageSize, 0, &data);
 		memcpy(data, pixels, static_cast<size_t>(imageSize));
-		//vkUnmapMemory(device, stagingBuffers.sampleTex.memory);
 
 		stbi_image_free(pixels);
 
 		sampleTexture.width = static_cast<uint32_t>(texWidth);
 		sampleTexture.height = static_cast<uint32_t>(texHeight);
-		//sampleTexture.size = imageSize;
-
-		//createImage(sampleTexture.width, sampleTexture.height, true, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &sampleTexture.image, &sampleTexture.memory);
+		
 		resMan->createImage(
 			VMA_MEMORY_USAGE_GPU_ONLY,
 			sampleTexture.width,
@@ -336,14 +293,7 @@ private:
 		resMan->destroyBuffer(stagingBuffers.vertices.buffer, stagingBuffers.vertices.allocation);
 		resMan->destroyBuffer(stagingBuffers.indices.buffer, stagingBuffers.indices.allocation);
 		resMan->destroyBuffer(stagingBuffers.sampleTex.buffer, stagingBuffers.sampleTex.allocation);
-		/*
-		vkDestroyBuffer(device, stagingBuffers.vertices.buffer, nullptr);
-		vkFreeMemory(device, stagingBuffers.vertices.memory, nullptr);
-		vkDestroyBuffer(device, stagingBuffers.indices.buffer, nullptr);
-		vkFreeMemory(device, stagingBuffers.indices.memory, nullptr);
-		vkDestroyBuffer(device, stagingBuffers.sampleTex.buffer, nullptr);
-		vkFreeMemory(device, stagingBuffers.sampleTex.memory, nullptr);
-		*/
+
 		// create texture img view and sampler
 		createImageView(sampleTexture.image, VK_FORMAT_R8G8B8A8_UNORM, &sampleTexture.view);
 		createSampler(&sampleTexture.sampler);
@@ -931,6 +881,7 @@ private:
 
 		// Pipeline stage at which the queue submission will wait (via pWaitSemaphores)
 		VkPipelineStageFlags waitStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
 		// The submit info structure specifices a command buffer queue submission batch
 		VkSubmitInfo submitInfo = {};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

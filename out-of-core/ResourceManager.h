@@ -7,7 +7,7 @@
 
 typedef struct Buffer {
 	VkBuffer buffer;
-	VkDeviceMemory memory;
+	VkDeviceMemory memory; // legacy
 	VmaAllocation allocation;
 } Buffer;
 
@@ -15,7 +15,7 @@ typedef struct Texture {
 	VkSampler sampler;
 	VkImage image;
 	VkImageLayout lastImgLayout;
-	VkDeviceMemory memory;
+	VkDeviceMemory memory; // legacy
 	VmaAllocation allocation;
 	VkImageView view;
 	uint32_t width, height;
@@ -25,7 +25,7 @@ typedef struct Texture {
 class ResourceManager
 {
 public:
-	ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device);
+	ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool cmdPool, VkQueue cmdQueue);
 	virtual ~ResourceManager();
 
 	void createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer * buffer, VmaAllocation * allocation, void **pPersistentlyMappedData);
@@ -39,11 +39,21 @@ public:
 
 	void transitionImageLayout(VkCommandBuffer cmdBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
-	void migrateTexture(const VkCommandBuffer& cmdBuffer, const Texture& srcTexture, Texture* dstTexture);
+	void migrateTexture(Texture& texture);
 
 private:
 	VmaAllocator allocator;
 
 	VkPhysicalDevice physicalDevice;
+
+	VkDevice device;
+
+	VkCommandPool cmdPool;
+	VkCommandBuffer cmdBuffer;
+	VkQueue cmdQueue;
+
+	void createCmdBuffer();
+	void beginCmdBuffer();
+	void flushCmdBuffer();
 };
 

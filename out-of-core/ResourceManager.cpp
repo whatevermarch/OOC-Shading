@@ -2,8 +2,10 @@
 
 #include "ResourceManager.h"
 
+#include <limits.h>
 
-ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device)
+
+ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool cmdPool, VkQueue cmdQueue)
 {
 	VmaAllocatorCreateInfo allocatorInfo = {};
 	allocatorInfo.physicalDevice = physicalDevice;
@@ -12,7 +14,11 @@ ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice devic
 	VK_CHECK_RESULT(vmaCreateAllocator(&allocatorInfo, &allocator));
 
 	this->physicalDevice = physicalDevice;
+	this->device = device;
+	this->cmdPool = cmdPool;
+	this->cmdQueue = cmdQueue;
 
+	createCmdBuffer();
 }
 
 
@@ -159,35 +165,43 @@ void ResourceManager::transitionImageLayout(VkCommandBuffer cmdBuffer, VkImage i
 	);
 }
 
-void ResourceManager::migrateTexture(const VkCommandBuffer& cmdBuffer, const Texture& srcTexture, Texture* dstTexture)
+void ResourceManager::migrateTexture(Texture& texture)
 {
-	if( dstTexture == nullptr)
+	if (texture.image == NULL)
 		throw std::runtime_error("Destination texture param does not exist.");
 
 	VmaMemoryUsage memUsage;
-	if (srcTexture.isInGPU)
+	if (texture.isInGPU) {
 		memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-	else
+		texture.isInGPU = false;
+
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_R8G8B8A8_UNORM, &formatProperties);
+		if (!(formatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+			throw std::runtime_error("Secondary Image doesn't support desired format.");
+	}
+	else {
 		memUsage = VMA_MEMORY_USAGE_GPU_ONLY;
+		texture.isInGPU = true;
+	}
 
-	VkFormatProperties formatProperties;
-	vkGetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_R8G8B8A8_UNORM, &formatProperties);
-
-	if (!(formatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
-		throw std::runtime_error("Secondary Image doesn't support desired format.");
+	VkImage dstImage;
+	VmaAllocation dstAlloc;
 
 	createImage(
-		memUsage, 
-		srcTexture.width, 
-		srcTexture.height, 
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
-		&dstTexture->image, 
-		&dstTexture->allocation,
+		memUsage,
+		texture.width,
+		texture.height,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		&dstImage,
+		&dstAlloc,
 		nullptr
 	);
 
-	transitionImageLayout(cmdBuffer, srcTexture.image, srcTexture.lastImgLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	transitionImageLayout(cmdBuffer, dstTexture->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	beginCmdBuffer();
+
+	transitionImageLayout(cmdBuffer, texture.image, texture.lastImgLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 	VkImageCopy copyRegionI = {};
 	copyRegionI.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -201,32 +215,74 @@ void ResourceManager::migrateTexture(const VkCommandBuffer& cmdBuffer, const Tex
 	copyRegionI.dstSubresource.layerCount = 1;
 	copyRegionI.dstOffset = { 0, 0, 0 };
 	copyRegionI.extent = {
-		srcTexture.width,
-		srcTexture.height,
+		texture.width,
+		texture.height,
 		1
 	};
 
 	vkCmdCopyImage(
-		cmdBuffer, 
-		srcTexture.image, 
+		cmdBuffer,
+		texture.image,
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		dstTexture->image,
+		dstImage,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		1, 
+		1,
 		&copyRegionI
 	);
 
-	transitionImageLayout(cmdBuffer, dstTexture->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-	dstTexture->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	dstTexture->width = srcTexture.width;
-	dstTexture->height = srcTexture.height;
-	dstTexture->isInGPU = true;
-	/*
-	destroyImage(srcTexture.image, srcTexture.allocation);
+	flushCmdBuffer();
 
-	srcTexture.image = dstImage;
-	srcTexture.allocation = dstAlloc;
-	srcTexture.isInGPU = false;
-	*/
+	destroyImage(texture.image, texture.allocation);
+
+	texture.image = dstImage;
+	texture.allocation = dstAlloc;
+	texture.lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	
+}
+
+void ResourceManager::createCmdBuffer()
+{
+	VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
+	cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	cmdBufAllocateInfo.commandPool = cmdPool;
+	cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cmdBufAllocateInfo.commandBufferCount = 1;
+
+	VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, &cmdBuffer));
+}
+
+void ResourceManager::beginCmdBuffer()
+{
+	VkCommandBufferBeginInfo cmdBufInfo = {};
+	cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	cmdBufInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	VK_CHECK_RESULT(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
+}
+
+void ResourceManager::flushCmdBuffer()
+{
+	VK_CHECK_RESULT(vkEndCommandBuffer(cmdBuffer));
+
+	vkQueueWaitIdle(cmdQueue);
+	
+	VkSubmitInfo submitInfo = {};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &cmdBuffer;
+
+	VkFenceCreateInfo fenceCreateInfo = {};
+	fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceCreateInfo.flags = 0;
+	VkFence fence;
+	VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, nullptr, &fence));
+
+	VK_CHECK_RESULT(vkQueueSubmit(cmdQueue, 1, &submitInfo, fence));
+
+	VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, ULONG_MAX));
+
+	vkDestroyFence(device, fence, nullptr);
+
 }
