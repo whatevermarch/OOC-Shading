@@ -27,6 +27,9 @@
     <ClInclude Include="VkUtils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Scene.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="VkBase.cpp">
@@ -38,12 +41,15 @@
     <ClCompile Include="OutOfCore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Scene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\quad.frag">
+    <None Include="shaders\scene.frag">
       <Filter>Resource Files\Shaders</Filter>
     </None>
-    <None Include="shaders\quad.vert">
+    <None Include="shaders\scene.vert">
       <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>

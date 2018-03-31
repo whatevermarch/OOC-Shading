@@ -2,6 +2,11 @@
 
 #include <vulkan\vulkan.h>
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -14,6 +19,7 @@
 #include <vector>
 #include <cstring>
 #include <set>
+
 
 #define VK_CHECK_RESULT(f)																				\
 {																										\

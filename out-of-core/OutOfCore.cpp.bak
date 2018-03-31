@@ -1,8 +1,11 @@
 #include "VkBase.h"
 #include "Scene.h"
 
-const char* vertShaderFile = "shaders/scene.vert.spv";
-const char* fragShaderFile = "shaders/scene.frag.spv";
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+const char* vertShaderFile = "shaders/quad.vert.spv";
+const char* fragShaderFile = "shaders/quad.frag.spv";
 const char* sampleTextureFile = "textures/marsha.jpg";
 
 class VkApp : public VkBase 
@@ -10,11 +13,53 @@ class VkApp : public VkBase
 public:
 	virtual ~VkApp()
 	{
-		delete(scene);
+		vkDestroyPipeline(device, pipeline, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
 		vkDestroyRenderPass(device, renderPass, nullptr);
+
+		vkDestroyDescriptorPool(device, descPool, nullptr);
+		vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
+
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
+
+		vkDestroyImageView(device, depthStencil.view, nullptr);
+		vkDestroyImage(device, depthStencil.image, nullptr);
+		vkFreeMemory(device, depthStencil.mem, nullptr);
+		
+		resMan->destroyBuffer(vertexBuffer.buffer, vertexBuffer.allocation);
+		resMan->destroyBuffer(indexBuffer.buffer, indexBuffer.allocation);
+
+		resMan->destroyBuffer(uniformBufferVS.buffer, uniformBufferVS.allocation);
+		/*
+		vkDestroyBuffer(device, vertexBuffer.buffer, nullptr);
+		vkFreeMemory(device, vertexBuffer.memory, nullptr);
+
+		vkDestroyBuffer(device, indexBuffer.buffer, nullptr);
+		vkFreeMemory(device, indexBuffer.memory, nullptr);
+		
+		vkDestroyBuffer(device, uniformBufferVS.buffer, nullptr);
+		vkFreeMemory(device, uniformBufferVS.memory, nullptr);
+		*/
+		//vkDestroyImageView(device, secondaryTexture.view, nullptr);
+		//resMan->destroyImage(secondaryTexture.image, secondaryTexture.allocation);
+		
+		vkDestroySampler(device, sampleTexture.sampler, nullptr);
+		vkDestroyImageView(device, sampleTexture.view, nullptr);
+		resMan->destroyImage(sampleTexture.image, sampleTexture.allocation);
 	}
 
 private:
+	std::vector<Vertex> vertices =
+	{
+		{ glm::vec3( -0.5f, -0.5f , 0.0f ),	glm::vec3( 1.0f, 0.0f, 0.0f ),	glm::vec2( 1.0f, 0.0f ) },
+		{ glm::vec3( 0.5f, -0.5f , 0.0f ),	glm::vec3( 0.0f, 1.0f, 0.0f ),	glm::vec2( 0.0f, 0.0f ) },
+		{ glm::vec3( 0.5f, 0.5f , 0.0f ),	glm::vec3( 0.0f, 0.0f, 1.0f ),	glm::vec2( 0.0f, 1.0f ) },
+		{ glm::vec3( -0.5f, 0.5f , 0.0f ),	glm::vec3( 1.0f, 1.0f, 1.0f ),	glm::vec2( 1.0f, 1.0f ) }
+	};
+
+	std::vector<uint32_t> indices = { 0,1,2, 2,3,0 };
 
 	Buffer vertexBuffer;
 
@@ -26,6 +71,17 @@ private:
 
 	Scene *scene;
 
+	// For simplicity we use the same uniform block layout as in the shader:
+	//
+	//	layout(set = 0, binding = 0) uniform UBO
+	//	{
+	//		mat4 projectionMatrix;
+	//		mat4 modelMatrix;
+	//		mat4 viewMatrix;
+	//	} ubo;
+	//
+	// This way we can just memcopy the ubo data to the ubo
+	// Note: You should use data types that align with the GPU in order to avoid manual padding (vec4, mat4)
 	struct {
 		glm::mat4 projectionMatrix;
 		glm::mat4 modelMatrix;
@@ -60,7 +116,7 @@ private:
 	inline static void keyInput(GLFWwindow* window, int key, int scancode, int action, int mods) {
 		if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
 			VkApp *app = static_cast<VkApp*>(glfwGetWindowUserPointer(window));
-			//app->migrateTexture(); // can use private func.
+			app->migrateTexture(); // can use private func.
 			
 		}
 	}
@@ -110,34 +166,221 @@ private:
 		std::cout << "Migration Completed! New Image is " << sampleTexture.image << std::endl;
 	}
 
-	void loadAsset()
+	void loadAsset() 
 	{
-		scene = new Scene(device, stdQueues.graphic, resMan);
-		scene->import("models/nanosuit/nanosuit.obj");
+		//scene = new Scene();
+		//scene->import("models/Curiosity.fbx");
+		//delete scene;
+
+		uint32_t vertexBufferSize = static_cast<uint32_t>(vertices.size() * sizeof(Vertex));
+
+		indicesCount = static_cast<uint32_t>(indices.size());
+		uint32_t indexBufferSize = static_cast<uint32_t>(indicesCount * sizeof(uint32_t));
+
+		void *data;
+		
+		struct {
+			Buffer vertices;
+			Buffer indices;
+			Buffer sampleTex;
+		} stagingBuffers;
+
+		// use resman for vb
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_CPU_ONLY, 
+			vertexBufferSize, 
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			&stagingBuffers.vertices.buffer, 
+			&stagingBuffers.vertices.allocation, 
+			&data
+		);
+
+		memcpy(data, vertices.data(), vertexBufferSize);
+
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_GPU_ONLY,
+			vertexBufferSize, 
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+			&vertexBuffer.buffer, 
+			&vertexBuffer.allocation, 
+			nullptr
+		);
+
+		//use resman for ib
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_CPU_ONLY,
+			indexBufferSize, 
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			&stagingBuffers.indices.buffer, 
+			&stagingBuffers.indices.allocation,
+			&data
+		);
+
+		memcpy(data, indices.data(), indexBufferSize);
+
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_GPU_ONLY,
+			indexBufferSize, 
+			VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+			&indexBuffer.buffer, 
+			&indexBuffer.allocation, 
+			nullptr
+		);
+		
+		// texture too
+		int texWidth, texHeight, texChannels;
+		
+		stbi_uc* pixels = stbi_load(sampleTextureFile, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		if (!pixels) {
+			throw std::runtime_error("failed to load texture image!");
+		}
+	
+		VkDeviceSize imageSize = texWidth * texHeight * 4;
+		//std::cout << "Width = " << texWidth << " and Height = " << texHeight << " with " << FreeImage_GetBPP(dib) << std::endl;
+
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_CPU_ONLY,
+			imageSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			&stagingBuffers.sampleTex.buffer,
+			&stagingBuffers.sampleTex.allocation,
+			&data
+		);
+
+		memcpy(data, pixels, static_cast<size_t>(imageSize));
+
+		stbi_image_free(pixels);
+
+		sampleTexture.width = static_cast<uint32_t>(texWidth);
+		sampleTexture.height = static_cast<uint32_t>(texHeight);
+		sampleTexture.format = VK_FORMAT_R8G8B8A8_UNORM;
+		
+		resMan->createImage(
+			VMA_MEMORY_USAGE_GPU_ONLY,
+			sampleTexture.width,
+			sampleTexture.height,
+			sampleTexture.format,
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			&sampleTexture.image,
+			&sampleTexture.allocation,
+			nullptr
+		);
+
+		// record copy command to queue
+		VkCommandBuffer copyCmd = createCmdBuffer(true);
+
+		VkBufferCopy copyRegionB = {};
+		// Vertex buffer
+		copyRegionB.size = vertexBufferSize;
+		vkCmdCopyBuffer(copyCmd, stagingBuffers.vertices.buffer, vertexBuffer.buffer, 1, &copyRegionB);
+		// Index buffer
+		copyRegionB.size = indexBufferSize;
+		vkCmdCopyBuffer(copyCmd, stagingBuffers.indices.buffer, indexBuffer.buffer, 1, &copyRegionB);
+		// Image
+		transitionImgLayout(copyCmd, sampleTexture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+		VkBufferImageCopy copyRegionBI = {};
+		copyRegionBI.bufferOffset = 0;
+		copyRegionBI.bufferRowLength = 0;
+		copyRegionBI.bufferImageHeight = 0;
+		copyRegionBI.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copyRegionBI.imageSubresource.mipLevel = 0;
+		copyRegionBI.imageSubresource.baseArrayLayer = 0;
+		copyRegionBI.imageSubresource.layerCount = 1;
+		copyRegionBI.imageOffset = { 0, 0, 0 };
+		copyRegionBI.imageExtent = {
+			sampleTexture.width,
+			sampleTexture.height,
+			1
+		};
+
+		vkCmdCopyBufferToImage(copyCmd, stagingBuffers.sampleTex.buffer, sampleTexture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegionBI);
+
+		transitionImgLayout(copyCmd, sampleTexture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		flushCmdBuffer(copyCmd);
+
+		// free staging resource
+		resMan->destroyBuffer(stagingBuffers.vertices.buffer, stagingBuffers.vertices.allocation);
+		resMan->destroyBuffer(stagingBuffers.indices.buffer, stagingBuffers.indices.allocation);
+		resMan->destroyBuffer(stagingBuffers.sampleTex.buffer, stagingBuffers.sampleTex.allocation);
+
+		// create texture img view and sampler
+		createImageView(sampleTexture.image, VK_FORMAT_R8G8B8A8_UNORM, &sampleTexture.view);
+		createSampler(&sampleTexture.sampler);
+
+		sampleTexture.lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		sampleTexture.isInGPU = true;
+
+	}
+
+	void prepareUniformBuffers() 
+	{
+		VkMemoryRequirements memReqs;
+
+		// Vertex shader uniform buffer block
+		VkBufferCreateInfo bufferInfo = {};
+		VkMemoryAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.pNext = nullptr;
+		allocInfo.allocationSize = 0;
+		allocInfo.memoryTypeIndex = 0;
+
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(uboVS);
+		// This buffer will be used as a uniform buffer
+		bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+
+		// Create a new buffer
+		VK_CHECK_RESULT(vkCreateBuffer(device, &bufferInfo, nullptr, &uniformBufferVS.buffer));
+		// Get memory requirements including size, alignment and memory type 
+		vkGetBufferMemoryRequirements(device, uniformBufferVS.buffer, &memReqs);
+		allocInfo.allocationSize = memReqs.size;
+		// Get the memory type index that supports host visibile memory access
+		// Most implementations offer multiple memory types and selecting the correct one to allocate memory from is crucial
+		// We also want the buffer to be host coherent so we don't have to flush (or sync after every update.
+		// Note: This may affect performance so you might not want to do this in a real world application that updates buffers on a regular base
+		allocInfo.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		// Allocate memory for the uniform buffer
+		VK_CHECK_RESULT(vkAllocateMemory(device, &allocInfo, nullptr, &(uniformBufferVS.memory)));
+		// Bind memory to buffer
+		VK_CHECK_RESULT(vkBindBufferMemory(device, uniformBufferVS.buffer, uniformBufferVS.memory, 0));
+
+		resMan->createBuffer(
+			VMA_MEMORY_USAGE_CPU_TO_GPU, 
+			sizeof(uboVS), 
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+			&uniformBufferVS.buffer, 
+			&uniformBufferVS.allocation, 
+			nullptr
+		);
 
 		updateUniformBuffers();
-
 	}
 
 	void updateUniformBuffers()
 	{
-		scene->uniformData.projection = glm::mat4(
-			1.0f, 0.0f, 0.0f, 0.0f,
-			+0.0f, -1.0f, 0.0f, 0.0f,
-			+0.0f, 0.0f, 0.5f, 0.0f,
-			+0.0f, 0.0f, 0.5f, 1.0f
-		) * glm::perspective(glm::radians(60.0f), (float)screenWidth / (float)screenHeight, 0.1f, 256.0f);
+		uboVS.projectionMatrix = glm::perspective(glm::radians(60.0f), (float)screenWidth / (float)screenHeight, 0.1f, 256.0f);
+		uboVS.projectionMatrix[1][1] *= -1;
+		uboVS.viewMatrix = glm::lookAt(glm::vec3(1.5f, 1.5f, 1.5f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-		scene->uniformData.view = glm::lookAt(glm::vec3(10.0f, 10.0f, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		scene->uniformData.model = glm::mat4(1.0f);
-
-		scene->uniformData.model = glm::scale(scene->uniformData.model, glm::vec3(0.3f, 0.3f, 0.3f));
-
+		uboVS.modelMatrix = glm::mat4(1.0f);
+		//uboVS.modelMatrix = glm::rotate(uboVS.modelMatrix, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+		//uboVS.modelMatrix = glm::rotate(uboVS.modelMatrix, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+		//uboVS.modelMatrix = glm::rotate(uboVS.modelMatrix, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+		
 		void *pData;
+		/*
+		VK_CHECK_RESULT(vkMapMemory(device, uniformBufferVS.memory, 0, sizeof(uboVS), 0, &pData));
+		memcpy(pData, &uboVS, sizeof(uboVS));
+		// Unmap after data has been copied
+		// Note: Since we requested a host coherent memory type for the uniform buffer, the write is instantly visible to the GPU
+		vkUnmapMemory(device, uniformBufferVS.memory);
+		*/
 
-		resMan->mapMemory(scene->uniformBuffer.allocation, &pData);
-		memcpy(pData, &scene->uniformData, sizeof(scene->uniformData));
-		resMan->unmapMemory(scene->uniformBuffer.allocation);
+		resMan->mapMemory(uniformBufferVS.allocation, &pData);
+		memcpy(pData, &uboVS, sizeof(uboVS));
+		resMan->unmapMemory(uniformBufferVS.allocation);
 	}
 
 	void setupDescriptorSetLayout()
@@ -188,7 +431,7 @@ private:
 		VkGraphicsPipelineCreateInfo pipelineCreateInfo = {};
 		pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		// The layout used for this pipeline (can be shared among multiple pipelines using the same layout)
-		pipelineCreateInfo.layout = scene->pipelineLayout;
+		pipelineCreateInfo.layout = pipelineLayout;
 		// Renderpass this pipeline is attached to
 		pipelineCreateInfo.renderPass = renderPass;
 
@@ -204,7 +447,7 @@ private:
 		VkPipelineRasterizationStateCreateInfo rasterizationState = {};
 		rasterizationState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 		rasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
-		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizationState.depthClampEnable = VK_FALSE;
 		rasterizationState.rasterizerDiscardEnable = VK_FALSE;
@@ -313,16 +556,7 @@ private:
 		pipelineCreateInfo.pDynamicState = &dynamicState;
 
 		// Create rendering pipeline using the specified states
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &scene->pipelines.solid));
-
-		// Alpha blended pipeline
-		rasterizationState.cullMode = VK_CULL_MODE_NONE;
-		blendAttachmentState[0].blendEnable = VK_TRUE;
-		blendAttachmentState[0].colorBlendOp = VK_BLEND_OP_ADD;
-		blendAttachmentState[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
-		blendAttachmentState[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &scene->pipelines.blending));
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipeline));
 
 		// Shader modules are no longer needed once the graphics pipeline has been created
 		vkDestroyShaderModule(device, shaderStages[0].module, nullptr);
@@ -406,7 +640,7 @@ private:
 		// Set clear values for all framebuffer attachments with loadOp set to clear
 		// We use two attachments (color and depth) that are cleared at the start of the subpass and as such we need to set clear values for both
 		VkClearValue clearValues[2];
-		clearValues[0].color = { { 0.25f, 0.25f, 0.25f, 1.0f } };
+		clearValues[0].color = { { 0.0f, 0.0f, 0.2f, 1.0f } };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = {};
@@ -447,7 +681,23 @@ private:
 			scissor.offset.y = 0;
 			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
-			scene->render(drawCmdBuffers[i]);
+			// Bind descriptor sets describing shader binding points
+			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descSet, 0, nullptr);
+
+			// Bind the rendering pipeline
+			// The pipeline (state object) contains all states of the rendering pipeline, binding it will set all the states specified at pipeline creation time
+			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+			// Bind triangle vertex buffer (contains position and colors)
+			VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
+
+			// Bind triangle index buffer
+			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+			// Draw indexed triangle
+			vkCmdDrawIndexed(drawCmdBuffers[i], indicesCount, 1, 0, 0, 1);
+
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
 
 			// Ending the render pass will add an implicit barrier transitioning the frame buffer color attachment to 
@@ -616,6 +866,10 @@ private:
 	{
 		VkBase::prepare();
 		loadAsset();
+		prepareUniformBuffers();
+		setupDescriptorSetLayout();
+		setupDescriptorPool();
+		setupDescriptorSet();
 		createDepthStencil();
 		createRenderPass();
 		createFrameBuffer();

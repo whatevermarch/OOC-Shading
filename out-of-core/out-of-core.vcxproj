@@ -19,6 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Scene.h" />
     <ClInclude Include="VkUtils.h" />
     <ClInclude Include="ResourceManager.h" />
     <ClInclude Include="VkBase.h" />
@@ -26,11 +27,12 @@
   <ItemGroup>
     <ClCompile Include="OutOfCore.cpp" />
     <ClCompile Include="ResourceManager.cpp" />
+    <ClCompile Include="Scene.cpp" />
     <ClCompile Include="VkBase.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\quad.frag" />
-    <None Include="shaders\quad.vert" />
+    <None Include="shaders\scene.frag" />
+    <None Include="shaders\scene.vert" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
@@ -110,11 +112,11 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\quad.vert.spv -V $(ProjectDir)shaders\quad.vert
-C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\quad.frag.spv -V $(ProjectDir)shaders\quad.frag</Command>
+      <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.vert.spv -V $(ProjectDir)shaders\scene.vert
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag</Command>
     </PreBuildEvent>
     <PreBuildEvent>
       <Message>Compile shaders to spir-v format</Message>
@@ -162,11 +164,11 @@ C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\quad.frag
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\quad.vert.spv -V $(ProjectDir)shaders\quad.vert
-C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\quad.frag.spv -V $(ProjectDir)shaders\quad.frag</Command>
+      <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.vert.spv -V $(ProjectDir)shaders\scene.vert
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag</Command>
     </PreBuildEvent>
     <PreBuildEvent>
       <Message>Compile shaders to spir-v format</Message>

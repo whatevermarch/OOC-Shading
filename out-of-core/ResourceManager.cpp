@@ -34,7 +34,53 @@ void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, V
 	bufferInfo.usage = usage;
 	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-	//bool isMappable = (memUsage == VMA_MEMORY_USAGE_CPU_ONLY) || (memUsage == VMA_MEMORY_USAGE_CPU_TO_GPU);
+	// test start
+	VkBuffer pseudoBuffer;
+	VkMemoryRequirements memReqs;
+	VK_CHECK_RESULT(vkCreateBuffer(device, &bufferInfo, nullptr, &pseudoBuffer));
+	vkGetBufferMemoryRequirements(device, pseudoBuffer, &memReqs);
+	vkDestroyBuffer(device, pseudoBuffer, nullptr);
+
+	if (memUsage == VMA_MEMORY_USAGE_GPU_ONLY && totalDeviceUsage + memReqs.size > PSUEDO_DEVICE_LIMIT * 0.9) {
+		std::vector<Resource*> URNotTheFace;
+		Resource* pSmallestResource;
+		uint32_t smallestResourceSize;
+		uint32_t oldSpace = PSUEDO_DEVICE_LIMIT * 0.9 - totalDeviceUsage;
+		uint32_t newSpace = oldSpace;
+
+		// what if one loop and heap empty
+		while (!deviceHeap.empty()) {
+			pSmallestResource = deviceHeap.top();
+			smallestResourceSize = pSmallestResource->allocation->GetSize();
+
+			if (memReqs.size < smallestResourceSize) {
+				for (Resource* pRes : URNotTheFace)
+					deviceHeap.push(pRes);
+				
+				bufferInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+				break;
+			}
+			else if (newSpace >= memReqs.size){
+				if (newSpace - memReqs.size < oldSpace) {
+					// return resources poped up to heap
+					for (Resource* pRes : URNotTheFace) 
+						deviceHeap.push(pRes);
+					
+					bufferInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+					break;
+				}
+				else {
+					// migrate those URNotTheFace resources
+				}
+			}
+
+			URNotTheFace.push_back(pSmallestResource);
+			deviceHeap.pop();
+
+			newSpace += smallestResourceSize;
+			totalDeviceUsage -= smallestResourceSize;
+		}
+	}
 
 	VmaAllocationCreateInfo allocCreateInfo = {};
 	allocCreateInfo.usage = memUsage;
@@ -56,7 +102,71 @@ void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, V
 		
 }
 
-void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkImageUsageFlags usage, VkImage *image, VmaAllocation *allocation, void **pPersistentlyMappedData)
+void ResourceManager::createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void * pData)
+{
+	if (pData == nullptr)
+		throw std::invalid_argument("f(x):createBufferInDevice needs data to initiate.");
+
+	Buffer stagingBuffer;
+
+	void* pMappedData;
+
+	createBuffer(
+		VMA_MEMORY_USAGE_CPU_ONLY,
+		size,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		&stagingBuffer.buffer,
+		&stagingBuffer.allocation,
+		&pMappedData
+	);
+
+	memcpy(pMappedData, pData, size);
+
+	createBuffer(
+		VMA_MEMORY_USAGE_GPU_ONLY,
+		size,
+		usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		&buffer->buffer,
+		&buffer->allocation,
+		nullptr
+	);
+
+	beginCmdBuffer();
+
+		VkBufferCopy copyRegionB = {};
+		copyRegionB.size = size;
+		vkCmdCopyBuffer(cmdBuffer, stagingBuffer.buffer, buffer->buffer, 1, &copyRegionB);
+
+	flushCmdBuffer();
+
+	destroyBuffer(stagingBuffer.buffer, stagingBuffer.allocation);
+
+	// Initialize member value
+	buffer->size = size;
+	buffer->isInGPU = true;
+}
+
+void ResourceManager::createBufferInHost(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void * pData)
+{
+	void* pMappedData;
+
+	createBuffer(
+		VMA_MEMORY_USAGE_CPU_TO_GPU,
+		size,
+		usage,
+		&buffer->buffer,
+		&buffer->allocation,
+		(pData == nullptr) ? nullptr : &pMappedData
+	);
+
+	if(pData != nullptr)
+		memcpy(pMappedData, pData, size);
+
+	buffer->size = size;
+	buffer->isInGPU = false;
+}
+
+void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VkImage *image, VmaAllocation *allocation, void **pPersistentlyMappedData)
 {
 	VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -65,7 +175,7 @@ void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint3
 	imageInfo.extent.depth = 1;
 	imageInfo.mipLevels = 1;
 	imageInfo.arrayLayers = 1;
-	imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+	imageInfo.format = format;
 	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	imageInfo.usage = usage;
 	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -91,6 +201,104 @@ void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint3
 	if (pPersistentlyMappedData != nullptr)
 		*pPersistentlyMappedData = allocInfo.pMappedData;
 
+}
+
+void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData)
+{
+	if (pData == nullptr)
+		throw std::invalid_argument("f(x):createBufferInDevice needs data to initiate.");
+
+	Buffer stagingBuffer;
+
+	void* pMappedData;
+	VkDeviceSize imageSize = width * height * 4;
+
+	createBuffer(
+		VMA_MEMORY_USAGE_CPU_ONLY,
+		imageSize,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		&stagingBuffer.buffer,
+		&stagingBuffer.allocation,
+		&pMappedData
+	);
+
+	memcpy(pMappedData, pData, imageSize);
+
+	createImage(
+		VMA_MEMORY_USAGE_GPU_ONLY,
+		width,
+		height,
+		format,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		&image->image,
+		&image->allocation,
+		nullptr
+	);
+
+	beginCmdBuffer();
+	
+	transitionImageLayout(cmdBuffer, image->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+	VkBufferImageCopy copyRegionBI = {};
+	copyRegionBI.bufferOffset = 0;
+	copyRegionBI.bufferRowLength = 0;
+	copyRegionBI.bufferImageHeight = 0;
+	copyRegionBI.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copyRegionBI.imageSubresource.mipLevel = 0;
+	copyRegionBI.imageSubresource.baseArrayLayer = 0;
+	copyRegionBI.imageSubresource.layerCount = 1;
+	copyRegionBI.imageOffset = { 0, 0, 0 };
+	copyRegionBI.imageExtent = {
+		width,
+		height,
+		1
+	};
+
+	vkCmdCopyBufferToImage(cmdBuffer, stagingBuffer.buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegionBI);
+
+	transitionImageLayout(cmdBuffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	flushCmdBuffer();
+
+	destroyBuffer(stagingBuffer.buffer, stagingBuffer.allocation);
+
+	image->width = width;
+	image->height = height;
+	image->format = format;
+	image->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	image->isInGPU = true;
+}
+
+void ResourceManager::createImageInHost(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData)
+{
+	void* pMappedData;
+	VkDeviceSize imageSize = width * height * 4;
+
+	createImage(
+		VMA_MEMORY_USAGE_CPU_TO_GPU,
+		width,
+		height,
+		format,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		&image->image,
+		&image->allocation,
+		nullptr
+	);
+
+	if (pData != nullptr)
+		memcpy(pMappedData, pData, imageSize);
+
+	beginCmdBuffer();
+
+	transitionImageLayout(cmdBuffer, image->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	flushCmdBuffer();
+
+	image->width = width;
+	image->height = height;
+	image->format = format;
+	image->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	image->isInGPU = false;
 }
 
 void ResourceManager::mapMemory(VmaAllocation allocation, void ** ppData)
@@ -165,7 +373,7 @@ void ResourceManager::transitionImageLayout(VkCommandBuffer cmdBuffer, VkImage i
 	);
 }
 
-void ResourceManager::migrateTexture(Texture& texture)
+void ResourceManager::migrateTexture(Image& texture)
 {
 	if (texture.image == NULL)
 		throw std::runtime_error("Destination texture param does not exist.");
@@ -192,6 +400,7 @@ void ResourceManager::migrateTexture(Texture& texture)
 		memUsage,
 		texture.width,
 		texture.height,
+		texture.format,
 		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		&dstImage,
 		&dstAlloc,
