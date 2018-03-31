@@ -9,7 +9,7 @@ This project is **IN PROGRESS**. I push the code to GitHub just to backup, so I 
 - [AMD's Vulkan Memory Allocator](https://gpuopen.com/gaming-product/vulkan-memory-allocator/) (that default pool is like .. Oh My God)
 - [GLM](https://glm.g-truc.net/)
 - [GLFW](www.glfw.org/)
-- [Assimp](assimp.sourceforge.net/)
+- [Assimp](https://assimp.sourceforge.net/)
 
 ### Special Thanks
 If there ain't no [Sascha Willems's sample](https://github.com/SaschaWillems/Vulkan) and [Alexander Overvoorde's tutorial](https://vulkan-tutorial.com/), I would have got no life till now for sure. LOL
