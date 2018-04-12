@@ -109,6 +109,9 @@ public:
 	void import(const std::string& filePath);
 	void render(VkCommandBuffer cmdBuffer);
 
+	// my work
+	void rebindTexture();
+
 	Buffer uniformBuffer;
 	struct UniformData {
 		glm::mat4 projection;
@@ -163,7 +166,6 @@ private:
 	//Mesh processMesh(aiMesh * aMesh);
 	//std::vector<Texture> loadMaterialTextures(aiMaterial *mat, aiTextureType type);
 	//Image importTextureFromFile(const std::string& filePath);
-	void createImageView(VkImage image, VkFormat format, VkImageView *view);
 	void createSampler(VkSampler *sampler);
 
 };

@@ -1,6 +1,10 @@
 #include "VkBase.h"
 #include "Scene.h"
 
+#define MEMORY_BOUND_CHANGE_SIZE_MB 10
+
+const VkDeviceSize memoryBoundChangeSize = MEMORY_BOUND_CHANGE_SIZE_MB * 1000000;
+
 const char* vertShaderFile = "shaders/scene.vert.spv";
 const char* fragShaderFile = "shaders/scene.frag.spv";
 const char* sampleTextureFile = "textures/marsha.jpg";
@@ -58,29 +62,41 @@ private:
 	}
 
 	inline static void keyInput(GLFWwindow* window, int key, int scancode, int action, int mods) {
+		VkApp *app = static_cast<VkApp*>(glfwGetWindowUserPointer(window));
+		
 		if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
-			VkApp *app = static_cast<VkApp*>(glfwGetWindowUserPointer(window));
-			//app->migrateTexture(); // can use private func.
-			
+			app->getHeapInfo();
 		}
+		else if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
+			app->reduceMemoryBound();
+		}
+		else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
+			app->extendMemoryBound();
+		}
+	}
+
+	void getHeapInfo() {
+		std::cout << "Device Heap Size is " << resMan->getDeviceHeapSize() << std::endl;
+		std::cout << "Host Heap Size is " << resMan->getHostHeapSize() << std::endl;
+	}
+
+	void reduceMemoryBound() {
+		resMan->reduceMemoryBound(memoryBoundChangeSize);
+		scene->rebindTexture();
+
+		std::cout << "Reduce Memort Bound Completed!" << std::endl;
+	}
+
+	void extendMemoryBound() {
+		resMan->extendMemoryBound(memoryBoundChangeSize);
+		scene->rebindTexture();
+
+		std::cout << "Extend Memort Bound Completed!" << std::endl;
 	}
 
 	void migrateTexture()
 	{
 		resMan->migrateTexture(sampleTexture);
-
-		vkDestroyImageView(device, sampleTexture.view, nullptr);
-		createImageView(sampleTexture.image, VK_FORMAT_R8G8B8A8_UNORM, &sampleTexture.view);
-
-		VkDescriptorBufferInfo bufferInfo = {};
-		bufferInfo.buffer = uniformBufferVS.buffer;
-		bufferInfo.offset = 0;
-		bufferInfo.range = sizeof(uboVS);
-
-		VkDescriptorImageInfo imageInfo = {};
-		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		imageInfo.imageView = sampleTexture.view; // secondaryTexture.view; // change point
-		imageInfo.sampler = sampleTexture.sampler; // secondaryTexture.sampler; // change point
 
 		std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
 		// Binding 0 : Uniform buffer
@@ -90,7 +106,7 @@ private:
 		descriptorWrites[0].dstArrayElement = 0;
 		descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		descriptorWrites[0].descriptorCount = 1;
-		descriptorWrites[0].pBufferInfo = &bufferInfo;
+		descriptorWrites[0].pBufferInfo = &uniformBufferVS.descInfo; //&bufferInfo;
 		// Binding 1 : Sampler
 		descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		descriptorWrites[1].dstSet = descSet;
@@ -98,7 +114,7 @@ private:
 		descriptorWrites[1].dstArrayElement = 0;
 		descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		descriptorWrites[1].descriptorCount = 1;
-		descriptorWrites[1].pImageInfo = &imageInfo;
+		descriptorWrites[1].pImageInfo = &sampleTexture.descInfo; //&imageInfo;
 		// descSet need to be in prompt state ( finish used by previous frame ) in order to update.
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
@@ -116,7 +132,6 @@ private:
 		scene->import("models/nanosuit/nanosuit.obj");
 
 		updateUniformBuffers();
-
 	}
 
 	void updateUniformBuffers()
@@ -128,7 +143,7 @@ private:
 			+0.0f, 0.0f, 0.5f, 1.0f
 		) * glm::perspective(glm::radians(60.0f), (float)screenWidth / (float)screenHeight, 0.1f, 256.0f);
 
-		scene->uniformData.view = glm::lookAt(glm::vec3(10.0f, 10.0f, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		scene->uniformData.view = glm::lookAt(glm::vec3(10.0f, 10.0f, 10.0f), glm::vec3(0.0f, 8.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		scene->uniformData.model = glm::mat4(1.0f);
 
 		scene->uniformData.model = glm::scale(scene->uniformData.model, glm::vec3(0.3f, 0.3f, 0.3f));
@@ -455,6 +470,14 @@ private:
 
 			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
 		}
+	}
+
+	void rebuildCommandBuffer()
+	{
+		for (short i = 0; i < static_cast<short>(drawCmdBuffers.size()); i++)
+			vkResetCommandBuffer(drawCmdBuffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+
+		buildCommandBuffers();
 	}
 
 	void createDepthStencil()

@@ -3,6 +3,7 @@
 #include "ResourceManager.h"
 
 #include <limits.h>
+#include <algorithm>
 
 
 ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool cmdPool, VkQueue cmdQueue)
@@ -18,7 +19,11 @@ ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice devic
 	this->cmdPool = cmdPool;
 	this->cmdQueue = cmdQueue;
 
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
 	createCmdBuffer();
+
+	//std::make_heap(deviceHeap.begin(), deviceHeap.end(), [](const Resource* lhs, const Resource* rhs) { return lhs->allocation->GetSize() > rhs->allocation->GetSize(); });
+	//std::make_heap(hostHeap.begin(), hostHeap.end(), [](const Resource* lhs, const Resource* rhs) { return lhs->allocation->GetSize() < rhs->allocation->GetSize(); });
 }
 
 
@@ -27,7 +32,7 @@ ResourceManager::~ResourceManager()
 	vmaDestroyAllocator(allocator);
 }
 
-void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer * buffer, VmaAllocation * allocation, void **pPersistentlyMappedData)
+void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void **pPersistentlyMappedData)
 {
 	VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	bufferInfo.size = size;
@@ -41,47 +46,6 @@ void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, V
 	vkGetBufferMemoryRequirements(device, pseudoBuffer, &memReqs);
 	vkDestroyBuffer(device, pseudoBuffer, nullptr);
 
-	if (memUsage == VMA_MEMORY_USAGE_GPU_ONLY && totalDeviceUsage + memReqs.size > PSUEDO_DEVICE_LIMIT * 0.9) {
-		std::vector<Resource*> URNotTheFace;
-		Resource* pSmallestResource;
-		uint32_t smallestResourceSize;
-		uint32_t oldSpace = PSUEDO_DEVICE_LIMIT * 0.9 - totalDeviceUsage;
-		uint32_t newSpace = oldSpace;
-
-		// what if one loop and heap empty
-		while (!deviceHeap.empty()) {
-			pSmallestResource = deviceHeap.top();
-			smallestResourceSize = pSmallestResource->allocation->GetSize();
-
-			if (memReqs.size < smallestResourceSize) {
-				for (Resource* pRes : URNotTheFace)
-					deviceHeap.push(pRes);
-				
-				bufferInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-				break;
-			}
-			else if (newSpace >= memReqs.size){
-				if (newSpace - memReqs.size < oldSpace) {
-					// return resources poped up to heap
-					for (Resource* pRes : URNotTheFace) 
-						deviceHeap.push(pRes);
-					
-					bufferInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-					break;
-				}
-				else {
-					// migrate those URNotTheFace resources
-				}
-			}
-
-			URNotTheFace.push_back(pSmallestResource);
-			deviceHeap.pop();
-
-			newSpace += smallestResourceSize;
-			totalDeviceUsage -= smallestResourceSize;
-		}
-	}
-
 	VmaAllocationCreateInfo allocCreateInfo = {};
 	allocCreateInfo.usage = memUsage;
 
@@ -91,15 +55,25 @@ void ResourceManager::createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, V
 
 	VmaAllocationInfo allocInfo = {};
 
-	VK_CHECK_RESULT(vmaCreateBuffer(allocator, &bufferInfo, &allocCreateInfo, buffer, allocation, &allocInfo));
+	VK_CHECK_RESULT(vmaCreateBuffer(allocator, &bufferInfo, &allocCreateInfo, &buffer->buffer, &buffer->allocation, &allocInfo));
 
-	//if (isMappable) {
-		//if (allocInfo.pMappedData == nullptr) 
-			//throw std::runtime_error("Resource manager failed to map memory!");
-	if(pPersistentlyMappedData != nullptr)
-		*pPersistentlyMappedData = allocInfo.pMappedData;
-	//}
-		
+	buffer->size = size;
+	buffer->isMigratable = false;
+	buffer->usage = usage;
+
+	if (memUsage == VMA_MEMORY_USAGE_GPU_ONLY) {
+		totalDeviceUsage += memReqs.size;
+		//deviceHeap.push(buffer);
+		buffer->isInGPU = true;
+	}
+	else {
+		totalHostUsage += memReqs.size;
+		//hostHeap.push(buffer);
+		buffer->isInGPU = false;
+
+		if (pPersistentlyMappedData != nullptr)
+			*pPersistentlyMappedData = allocInfo.pMappedData;
+	}
 }
 
 void ResourceManager::createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void * pData)
@@ -115,8 +89,7 @@ void ResourceManager::createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags
 		VMA_MEMORY_USAGE_CPU_ONLY,
 		size,
 		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		&stagingBuffer.buffer,
-		&stagingBuffer.allocation,
+		&stagingBuffer,
 		&pMappedData
 	);
 
@@ -126,8 +99,7 @@ void ResourceManager::createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags
 		VMA_MEMORY_USAGE_GPU_ONLY,
 		size,
 		usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		&buffer->buffer,
-		&buffer->allocation,
+		buffer,
 		nullptr
 	);
 
@@ -139,11 +111,7 @@ void ResourceManager::createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags
 
 	flushCmdBuffer();
 
-	destroyBuffer(stagingBuffer.buffer, stagingBuffer.allocation);
-
-	// Initialize member value
-	buffer->size = size;
-	buffer->isInGPU = true;
+	destroyBuffer(stagingBuffer);
 }
 
 void ResourceManager::createBufferInHost(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void * pData)
@@ -154,19 +122,15 @@ void ResourceManager::createBufferInHost(VkDeviceSize size, VkBufferUsageFlags u
 		VMA_MEMORY_USAGE_CPU_TO_GPU,
 		size,
 		usage,
-		&buffer->buffer,
-		&buffer->allocation,
+		buffer,
 		(pData == nullptr) ? nullptr : &pMappedData
 	);
 
 	if(pData != nullptr)
 		memcpy(pMappedData, pData, size);
-
-	buffer->size = size;
-	buffer->isInGPU = false;
 }
 
-void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VkImage *image, VmaAllocation *allocation, void **pPersistentlyMappedData)
+void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void **pPersistentlyMappedData)
 {
 	VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -186,20 +150,53 @@ void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint3
 	else
 		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
 
-	//bool isMappable = (memUsage == VMA_MEMORY_USAGE_CPU_ONLY) || (memUsage == VMA_MEMORY_USAGE_CPU_TO_GPU);
+	if (usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT && usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+		image->isMigratable = true;
+	else
+		image->isMigratable = false;
+
+	VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
+	VkDeviceSize resSize = getRequiredImageSize(&imageInfo);
+
+	if (image->isMigratable && 
+		memUsage == VMA_MEMORY_USAGE_GPU_ONLY && 
+		totalDeviceUsage + resSize > devLimit)
+	{
+		memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
+		resSize = getRequiredImageSize(&imageInfo);
+		std::cout << "Image go for host instead" << std::endl;
+	}
 
 	VmaAllocationCreateInfo allocCreateInfo = {};
 	allocCreateInfo.usage = memUsage;
-
-	if (pPersistentlyMappedData != nullptr)
-		allocCreateInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	allocCreateInfo.flags = (pPersistentlyMappedData != nullptr) ? VMA_ALLOCATION_CREATE_MAPPED_BIT : NULL;
 
 	VmaAllocationInfo allocInfo = {};
+	
+	VK_CHECK_RESULT(vmaCreateImage(allocator, &imageInfo, &allocCreateInfo, &image->image, &image->allocation, &allocInfo));
 
-	VK_CHECK_RESULT(vmaCreateImage(allocator, &imageInfo, &allocCreateInfo, image, allocation, &allocInfo));
+	image->width = width;
+	image->height = height;
+	image->format = format;
+	image->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	image->usage = usage;
 
-	if (pPersistentlyMappedData != nullptr)
-		*pPersistentlyMappedData = allocInfo.pMappedData;
+	if (memUsage == VMA_MEMORY_USAGE_GPU_ONLY) {
+		totalDeviceUsage += resSize;
+		image->isInGPU = true;
+
+		if (image->isMigratable) deviceHeap.push(image);
+	}
+	else {
+		totalHostUsage += resSize;
+		image->isInGPU = false;
+
+		if (image->isMigratable) hostHeap.push(image);
+
+		if (pPersistentlyMappedData != nullptr)
+			*pPersistentlyMappedData = allocInfo.pMappedData;
+	}
 
 }
 
@@ -217,8 +214,7 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 		VMA_MEMORY_USAGE_CPU_ONLY,
 		imageSize,
 		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		&stagingBuffer.buffer,
-		&stagingBuffer.allocation,
+		&stagingBuffer,
 		&pMappedData
 	);
 
@@ -229,9 +225,8 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 		width,
 		height,
 		format,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		&image->image,
-		&image->allocation,
+		usage,
+		image,
 		nullptr
 	);
 
@@ -260,13 +255,7 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 
 	flushCmdBuffer();
 
-	destroyBuffer(stagingBuffer.buffer, stagingBuffer.allocation);
-
-	image->width = width;
-	image->height = height;
-	image->format = format;
-	image->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	image->isInGPU = true;
+	destroyBuffer(stagingBuffer);
 }
 
 void ResourceManager::createImageInHost(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData)
@@ -279,10 +268,9 @@ void ResourceManager::createImageInHost(uint32_t width, uint32_t height, VkForma
 		width,
 		height,
 		format,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		&image->image,
-		&image->allocation,
-		nullptr
+		usage,
+		image,
+		(pData == nullptr) ? nullptr : &pMappedData
 	);
 
 	if (pData != nullptr)
@@ -293,12 +281,6 @@ void ResourceManager::createImageInHost(uint32_t width, uint32_t height, VkForma
 	transitionImageLayout(cmdBuffer, image->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	flushCmdBuffer();
-
-	image->width = width;
-	image->height = height;
-	image->format = format;
-	image->lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	image->isInGPU = false;
 }
 
 void ResourceManager::mapMemory(VmaAllocation allocation, void ** ppData)
@@ -311,14 +293,65 @@ void ResourceManager::unmapMemory(VmaAllocation allocation)
 	vmaUnmapMemory(allocator, allocation);
 }
 
-void ResourceManager::destroyBuffer(VkBuffer buffer, VmaAllocation allocation)
+void ResourceManager::destroyBuffer(Buffer &buffer)
 {
-	vmaDestroyBuffer(allocator, buffer, allocation);
+	if (buffer.isInGPU)
+		totalDeviceUsage -= buffer.allocation->GetSize();
+	else 
+		totalHostUsage -= buffer.allocation->GetSize();
+
+	vmaDestroyBuffer(allocator, buffer.buffer, buffer.allocation);
 }
 
-void ResourceManager::destroyImage(VkImage image, VmaAllocation allocation)
+void ResourceManager::destroyImage(Image &image)
 {
-	vmaDestroyImage(allocator, image, allocation);
+	if (image.isInGPU) {
+		totalDeviceUsage -= image.allocation->GetSize();
+		deviceHeap.remove(&image);
+		vmaDestroyImage(allocator, image.image, image.allocation);
+
+		Resource* pRes;
+		VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
+		while (!hostHeap.empty()) {
+			if (hostHeap.top()->allocation->GetSize() + totalDeviceUsage > devLimit) break;
+
+			pRes = hostHeap.top();
+			hostHeap.pop();
+
+			migrateResource(*pRes);
+
+			deviceHeap.push(pRes);
+			// after this, top has been poped, totalDev is added
+		}
+
+	}
+	else {
+		totalHostUsage -= image.allocation->GetSize();
+		hostHeap.remove(&image);
+		vmaDestroyImage(allocator, image.image, image.allocation);
+	}
+	
+	//vmaDestroyImage(allocator, image.image, image.allocation);
+}
+
+void ResourceManager::createImageView(VkImage image, VkFormat format, VkImageView * imageView)
+{
+	VkImageViewCreateInfo viewInfo = {};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = image;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = format;
+	viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+	viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+	viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+	viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+
+	VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, imageView));
 }
 
 void ResourceManager::transitionImageLayout(VkCommandBuffer cmdBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout)
@@ -393,24 +426,22 @@ void ResourceManager::migrateTexture(Image& texture)
 		texture.isInGPU = true;
 	}
 
-	VkImage dstImage;
-	VmaAllocation dstAlloc;
+	Image destImage;
 
 	createImage(
 		memUsage,
 		texture.width,
 		texture.height,
 		texture.format,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		&dstImage,
-		&dstAlloc,
+		texture.usage,
+		&destImage,
 		nullptr
 	);
 
 	beginCmdBuffer();
 
 	transitionImageLayout(cmdBuffer, texture.image, texture.lastImgLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	transitionImageLayout(cmdBuffer, destImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 	VkImageCopy copyRegionI = {};
 	copyRegionI.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -433,22 +464,152 @@ void ResourceManager::migrateTexture(Image& texture)
 		cmdBuffer,
 		texture.image,
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		dstImage,
+		destImage.image,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		1,
 		&copyRegionI
 	);
 
-	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	transitionImageLayout(cmdBuffer, destImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	flushCmdBuffer();
 
-	destroyImage(texture.image, texture.allocation);
+	destroyImage(texture);
 
-	texture.image = dstImage;
-	texture.allocation = dstAlloc;
+	texture.image = destImage.image;
+	texture.allocation = destImage.allocation;
 	texture.lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	
+	texture.isBoundToDesc = false;
+
+	vkDestroyImageView(device, texture.view, nullptr);
+	createImageView(texture.image, VK_FORMAT_R8G8B8A8_UNORM, &texture.view);
+
+	texture.updateDescriptorInfo();
+}
+
+void ResourceManager::migrateBuffer(Buffer & buffer)
+{
+	if (buffer.buffer == NULL)
+		throw std::runtime_error("Destination texture param does not exist.");
+
+	VmaMemoryUsage memUsage;
+	if (buffer.isInGPU) {
+		memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+		buffer.isInGPU = false;
+	}
+	else {
+		memUsage = VMA_MEMORY_USAGE_GPU_ONLY;
+		buffer.isInGPU = true;
+	}
+
+	Buffer destBuffer;
+
+	createBuffer(
+		memUsage,
+		buffer.size,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | buffer.usage,
+		&destBuffer,
+		nullptr
+	);
+
+	beginCmdBuffer();
+
+	VkBufferCopy copyRegionB = {};
+	copyRegionB.size = buffer.size;
+	copyRegionB.srcOffset = 0;
+	copyRegionB.dstOffset = 0;
+
+	vkCmdCopyBuffer(cmdBuffer, buffer.buffer, destBuffer.buffer, 1, &copyRegionB);
+
+	flushCmdBuffer();
+
+	destroyBuffer(buffer);
+
+	buffer.allocation = destBuffer.allocation;
+	buffer.buffer = destBuffer.buffer;
+
+	buffer.updateDescriptorInfo();
+}
+
+void ResourceManager::migrateResource(Resource & resource)
+{
+	if (!resource.isMigratable) 
+		throw std::invalid_argument("You are moving immigratable resource.");
+
+	if (resource.isInGPU)
+		totalDeviceUsage -= resource.allocation->GetSize();
+	else
+		totalHostUsage -= resource.allocation->GetSize();
+
+	if (resource.type == RESOURCE_TYPE_BUFFER)
+		migrateBuffer((Buffer&)resource);
+	else if (resource.type == RESOURCE_TYPE_IMAGE)
+		migrateTexture((Image&)resource);
+	else
+		throw std::invalid_argument("Cannot indentify resource type.");
+
+	if (resource.isInGPU)
+		totalDeviceUsage += resource.allocation->GetSize();
+	else
+		totalHostUsage += resource.allocation->GetSize();
+
+}
+
+void ResourceManager::reduceMemoryBound(VkDeviceSize amount)
+{
+	pseudoDeviceLimit -= amount;
+	std::cout << "Now Max Device Memory is " << pseudoDeviceLimit << std::endl;
+
+	std::cout << "Host Heap size : " << hostHeap.size() << std::endl;
+	Resource* pRes;
+	VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
+	while (!deviceHeap.empty() && devLimit < totalDeviceUsage) {
+		// migrateResource will manage totalDevice/HostUsage
+		pRes = deviceHeap.top();
+		deviceHeap.pop();
+		migrateResource(*pRes);
+
+		// heap compare pRes with unknown // something wrong with heap // may edit comapre class operation
+		hostHeap.push(pRes);
+		
+	}
+
+	std::cout << "Now Total Device Usage is " << totalDeviceUsage << std::endl;
+	std::cout << "Now Total Host Usage is " << totalHostUsage << std::endl;
+}
+
+void ResourceManager::extendMemoryBound(VkDeviceSize amount)
+{
+	pseudoDeviceLimit += amount;
+	std::cout << "Now Max Device Memory is " << pseudoDeviceLimit << std::endl;
+
+	Resource* pRes;
+	VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
+	while (!hostHeap.empty()) {
+		if (hostHeap.top()->allocation->GetSize() + totalDeviceUsage > devLimit) break;
+
+		pRes = hostHeap.top();
+		hostHeap.pop();
+
+		migrateResource(*pRes);
+		// crash too
+		deviceHeap.push(pRes);
+		// after this, top has been poped, totalDev is added
+	}
+
+	std::cout << "Now Total Device Usage is " << totalDeviceUsage << std::endl;
+	std::cout << "Now Total Host Usage is " << totalHostUsage << std::endl;
+}
+
+VkDeviceSize ResourceManager::getRequiredImageSize(VkImageCreateInfo* info)
+{
+	VkImage pseudoImage;
+	VkMemoryRequirements memReqs;
+	VK_CHECK_RESULT(vkCreateImage(device, info, nullptr, &pseudoImage));
+	vkGetImageMemoryRequirements(device, pseudoImage, &memReqs);
+	vkDestroyImage(device, pseudoImage, nullptr);
+
+	return memReqs.size;
 }
 
 void ResourceManager::createCmdBuffer()
@@ -494,4 +655,22 @@ void ResourceManager::flushCmdBuffer()
 
 	vkDestroyFence(device, fence, nullptr);
 
+}
+
+bool gtResource::operator()(Resource * const &lhs, Resource * const &rhs)
+{
+	return lhs->allocation->GetSize() > rhs->allocation->GetSize();
+}
+
+bool ResourceHeap::remove(const Resource * value)
+{
+	auto it = std::find(this->c.begin(), this->c.end(), value);
+	if (it != this->c.end()) {
+		this->c.erase(it);
+		std::make_heap(this->c.begin(), this->c.end(), this->comp);
+		return true;
+	}
+	else {
+		return false;
+	}
 }

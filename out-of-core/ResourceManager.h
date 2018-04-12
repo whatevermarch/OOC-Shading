@@ -4,22 +4,47 @@
 
 #include <vk_mem_alloc.h>
 
+#include <vector>
 #include <queue>
-#include <stack>
+#include <algorithm>
 
 
-#define PSUEDO_DEVICE_LIMIT 200 // in MBs
+#define PSUEDO_DEVICE_LIMIT 10 // in MBs
+
+enum ResourceType {
+	RESOURCE_TYPE_BUFFER = 0,
+	RESOURCE_TYPE_IMAGE = 1
+};
 
 struct Resource {
 	VmaAllocation allocation;
+	ResourceType type;
+	bool isInGPU;
+	bool isMigratable;
+	bool isBoundToDesc;
 
 	virtual void updateDescriptorInfo() = 0;
 };
 
-typedef struct Buffer : Resource {
+struct gtResource {
+	bool operator() (Resource * const &lhs, Resource * const &rhs);
+};
+
+class ResourceHeap : public std::priority_queue<Resource*, std::vector<Resource*>, gtResource>
+{
+public:
+	bool remove(const Resource* value);
+};
+
+struct Buffer : Resource {
 	VkBuffer buffer;
 	VkDeviceSize size;
-	bool isInGPU;
+	VkBufferUsageFlags usage;
+
+	inline Buffer() {
+		type = RESOURCE_TYPE_BUFFER;
+		isBoundToDesc = false;
+	}
 
 	VkDescriptorBufferInfo descInfo;
 	inline virtual void updateDescriptorInfo() {
@@ -27,16 +52,21 @@ typedef struct Buffer : Resource {
 		descInfo.offset = 0;
 		descInfo.range = size;
 	}
-} Buffer;
+};
 
-typedef struct Image : Resource {
+struct Image : Resource {
 	VkSampler sampler;
 	VkImage image;
 	VkImageLayout lastImgLayout;
 	VkImageView view;
 	uint32_t width, height;
 	VkFormat format;
-	bool isInGPU;
+	VkImageUsageFlags usage;
+
+	inline Image() {
+		type = RESOURCE_TYPE_IMAGE;
+		isBoundToDesc = false;
+	}
 
 	VkDescriptorImageInfo descInfo;
 	inline virtual void updateDescriptorInfo() {
@@ -44,7 +74,7 @@ typedef struct Image : Resource {
 		descInfo.imageView = view;
 		descInfo.sampler = sampler;
 	};
-} Image;
+};
 
 class ResourceManager
 {
@@ -52,28 +82,41 @@ public:
 	ResourceManager(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool cmdPool, VkQueue cmdQueue);
 	virtual ~ResourceManager();
 
-	void createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer * buffer, VmaAllocation * allocation, void **pPersistentlyMappedData);
+	void createBuffer(VmaMemoryUsage memUsage, VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void **pPersistentlyMappedData);
 	void createBufferInDevice(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void* pData);
 	void createBufferInHost(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void* pData);
 
-	void createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VkImage *image, VmaAllocation *allocation, void **pPersistentlyMappedData);
+	void createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void **pPersistentlyMappedData);
 	void createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void* pData);
 	void createImageInHost(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void* pData);
 
 	void mapMemory(VmaAllocation allocation, void** ppData);
 	void unmapMemory(VmaAllocation allocation);
 
-	void destroyBuffer(VkBuffer buffer, VmaAllocation allocation);
-	void destroyImage(VkImage image, VmaAllocation allocation);
+	void destroyBuffer(Buffer &buffer);
+	void destroyImage(Image &image);
 
+	void createImageView(VkImage image, VkFormat format, VkImageView* imageView);
 	void transitionImageLayout(VkCommandBuffer cmdBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
 	void migrateTexture(Image& texture);
+	void migrateBuffer(Buffer& buffer);
+	void migrateResource(Resource& resource);
+
+	// my work
+	void reduceMemoryBound(VkDeviceSize amount);
+	void extendMemoryBound(VkDeviceSize amount);
+
+	//test
+	void printHeap();
+	inline size_t getDeviceHeapSize() { return deviceHeap.size(); }
+	inline size_t getHostHeapSize() { return hostHeap.size(); }
 
 private:
 	VmaAllocator allocator;
 
 	VkPhysicalDevice physicalDevice;
+	VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
 
 	VkDevice device;
 
@@ -82,21 +125,12 @@ private:
 	VkQueue cmdQueue;
 
 	// my work
-	// Heap<Resource> deviceHeap // may use priority queue (#include <queue>) , (default) less is drown (last to pop)
-	// Stack<Resource> hostStack // use stack (#include <stack>)
 
-	struct ResourceCompare {
-		bool operator() (const Resource* lhs, const Resource* rhs) {
-			return lhs->allocation->GetSize() > rhs->allocation->GetSize();
-		}
-	};
-	std::priority_queue<Resource*, std::vector<Resource*>, ResourceCompare> deviceHeap;
+	ResourceHeap deviceHeap, hostHeap;
+	VkDeviceSize totalDeviceUsage = 0, totalHostUsage = 0, pseudoDeviceLimit = PSUEDO_DEVICE_LIMIT * 1000000;
 
-	std::stack<Resource*> hostStack;
-
-	uint32_t totalDeviceUsage, totalHostUsage;
-
-	bool isAvailable();
+	bool isAvailable(VkMemoryRequirements& memReqs, VmaMemoryUsage& memUsage);
+	VkDeviceSize getRequiredImageSize(VkImageCreateInfo* info);
 
 	void createCmdBuffer();
 	void beginCmdBuffer();

@@ -98,11 +98,6 @@ protected:
 	virtual void render() = 0;
 
 	// support functions
-	void createImageView(VkImage image, VkFormat format, VkImageView* imgView);
-	void createSampler(VkSampler* sampler);
-
-	void transitionImgLayout(VkCommandBuffer cmdBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
-
 	uint32_t getMemoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags properties);
 	VkCommandBuffer createCmdBuffer(bool begin);
 	void flushCmdBuffer(VkCommandBuffer cmdBuffer);

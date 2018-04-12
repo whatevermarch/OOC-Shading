@@ -19,6 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ResourceHeap.h" />
     <ClInclude Include="Scene.h" />
     <ClInclude Include="VkUtils.h" />
     <ClInclude Include="ResourceManager.h" />

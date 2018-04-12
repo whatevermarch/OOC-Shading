@@ -14,12 +14,12 @@ Scene::Scene(VkDevice device, VkQueue queue, ResourceManager *resMan) : device(d
 
 Scene::~Scene()
 {
-	resMan->destroyBuffer(vertexBuffer.buffer, vertexBuffer.allocation);
-	resMan->destroyBuffer(indexBuffer.buffer, indexBuffer.allocation);
+	resMan->destroyBuffer(vertexBuffer);
+	resMan->destroyBuffer(indexBuffer);
 	for (auto material : materials)
 	{
 		vkDestroyImageView(device, material.diffuse.image.view, nullptr);
-		resMan->destroyImage(material.diffuse.image.image, material.diffuse.image.allocation);
+		resMan->destroyImage(material.diffuse.image);
 	}
 	vkDestroySampler(device, defaultSampler, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -28,7 +28,7 @@ Scene::~Scene()
 	vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 	vkDestroyPipeline(device, pipelines.solid, nullptr);
 	vkDestroyPipeline(device, pipelines.blending, nullptr);
-	resMan->destroyBuffer(uniformBuffer.buffer, uniformBuffer.allocation);
+	resMan->destroyBuffer(uniformBuffer);
 
 }
 
@@ -88,6 +88,29 @@ void Scene::render(VkCommandBuffer cmdBuffer)
 		vkCmdDrawIndexed(cmdBuffer, meshes[i].indexCount, 1, 0, meshes[i].indexBase, 0);
 	}
 
+}
+
+void Scene::rebindTexture()
+{
+	// Material descriptor sets
+	for (size_t i = 0; i < materials.size(); i++)
+	{
+		if (materials[i].diffuse.image.isBoundToDesc) continue;
+
+		std::vector<VkWriteDescriptorSet> descriptorWrites;
+		descriptorWrites.resize(1);
+
+		// Binding 0: Diffuse texture // this will be executed again when migration process complete
+		descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrites[0].dstSet = materials[i].descriptorSet;
+		descriptorWrites[0].dstBinding = 0;
+		descriptorWrites[0].dstArrayElement = 0;
+		descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		descriptorWrites[0].descriptorCount = 1;
+		descriptorWrites[0].pImageInfo = &materials[i].diffuse.image.descInfo;
+
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, NULL);
+	}
 }
 
 void Scene::extractMeshes(const aiScene *scene)
@@ -291,7 +314,7 @@ void Scene::extractMaterials(const aiScene * scene)
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
 		descriptorWrites.resize(1);
 
-		// Binding 0: Diffuse texture
+		// Binding 0: Diffuse texture // this will be executed again when migration process complete
 		descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		descriptorWrites[0].dstSet = materials[i].descriptorSet;
 		descriptorWrites[0].dstBinding = 0;
@@ -301,6 +324,8 @@ void Scene::extractMaterials(const aiScene * scene)
 		descriptorWrites[0].pImageInfo = &materials[i].diffuse.image.descInfo;
 
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, NULL);
+
+		materials[i].diffuse.image.isBoundToDesc = true;
 	}
 
 	// Scene descriptor set
@@ -349,37 +374,17 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 		texWidth,
 		texHeight,
 		format,
-		VK_IMAGE_USAGE_SAMPLED_BIT,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		&texture->image,
 		pixels
 	);
 
 	stbi_image_free(pixels);
 
-	createImageView(texture->image.image, texture->image.format, &texture->image.view);
+	resMan->createImageView(texture->image.image, texture->image.format, &texture->image.view);
 	texture->image.sampler = defaultSampler;
 	texture->image.updateDescriptorInfo();
 
-}
-
-void Scene::createImageView(VkImage image, VkFormat format, VkImageView * view)
-{
-	VkImageViewCreateInfo viewInfo = {};
-	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	viewInfo.image = image;
-	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	viewInfo.format = format;
-	viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-	viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-	viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-	viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	viewInfo.subresourceRange.baseMipLevel = 0;
-	viewInfo.subresourceRange.levelCount = 1;
-	viewInfo.subresourceRange.baseArrayLayer = 0;
-	viewInfo.subresourceRange.layerCount = 1;
-
-	VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, view));
 }
 
 void Scene::createSampler(VkSampler * sampler)
