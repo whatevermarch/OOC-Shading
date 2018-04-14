@@ -80,17 +80,85 @@ void VkBase::prepare()
 	createStandardSemaphores();
 	createPipelineCache();
 	setupResourceManager();
+
+	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+	shaderStages.resize(2);
+
+	shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	shaderStages[0].module = loadSPIRVShader("shaders/base/textoverlay.vert.spv");
+	shaderStages[0].pName = "main";
+	assert(shaderStages[0].module != VK_NULL_HANDLE);
+
+	shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	shaderStages[1].module = loadSPIRVShader("shaders/base/textoverlay.frag.spv");
+	shaderStages[1].pName = "main";
+	assert(shaderStages[1].module != VK_NULL_HANDLE);
+
+	textUI = new TextOverlay(
+		device,
+		resMan,
+		swapChain.framebuffers,
+		swapChain.imageFormat,
+		depthFormat,
+		&screenWidth,
+		&screenHeight,
+		shaderStages
+	);
+
+	updatePerfValue();
 }
 
 void VkBase::renderLoop()
 {
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+
+		auto tStart = std::chrono::high_resolution_clock::now();
+
 		render();
-		// fpsCounter();
+		// need frameTomer, fpsTimer, 
+		auto tEnd = std::chrono::high_resolution_clock::now();
+		auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+		fpsTimer += (float)tDiff; // need
+		if (fpsTimer > 1000.0f)
+		{
+			lastFPS = static_cast<uint32_t>(1000.0f / (float)tDiff); // need
+
+			updatePerfValue();
+
+			fpsTimer = 0.0f;
+		}
 	}
 
 	vkDeviceWaitIdle(device);
+}
+
+void VkBase::updatePerfValue()
+{
+	textUI->beginTextUpdate();
+
+	// 20.0f each line
+
+	textUI->addText("Performance Details - " + std::string(deviceProperties.deviceName), 5.0f, 5.0f, TextOverlay::alignLeft);
+
+	std::stringstream ss;
+	ss << std::fixed << std::setprecision(3) << "FPS : " << lastFPS;
+	textUI->addText(ss.str(), 5.0f, 25.0f, TextOverlay::alignLeft);
+
+	ss.clear();
+	ss << std::fixed << std::setprecision(3) << "Total Device Usage : " << lastFPS << " MBs"; // resMan->getDeviceUsage();
+	textUI->addText(ss.str(), 5.0f, 45.0f, TextOverlay::alignLeft);
+
+	ss.clear();
+	ss << std::fixed << std::setprecision(3) << "Total Host Usage : " << lastFPS << " MBs"; // resMan->getHostUsage();
+	textUI->addText(ss.str(), 5.0f, 65.0f, TextOverlay::alignLeft);
+
+	// getOverlayText(textUI); future work - pure virtual f(x)
+
+	textUI->endTextUpdate();
 }
 
 uint32_t VkBase::getMemoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags properties)

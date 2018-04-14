@@ -110,7 +110,7 @@ public:
 	void render(VkCommandBuffer cmdBuffer);
 
 	// my work
-	void rebindTexture();
+	bool rebindTexture();
 
 	Buffer uniformBuffer;
 	struct UniformData {

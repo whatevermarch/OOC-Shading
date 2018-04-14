@@ -34,6 +34,7 @@ class ResourceHeap : public std::priority_queue<Resource*, std::vector<Resource*
 {
 public:
 	bool remove(const Resource* value);
+	void checkMember();
 };
 
 struct Buffer : Resource {
@@ -111,6 +112,7 @@ public:
 	void printHeap();
 	inline size_t getDeviceHeapSize() { return deviceHeap.size(); }
 	inline size_t getHostHeapSize() { return hostHeap.size(); }
+	void inspectHeap();
 
 private:
 	VmaAllocator allocator;
@@ -125,11 +127,10 @@ private:
 	VkQueue cmdQueue;
 
 	// my work
-
 	ResourceHeap deviceHeap, hostHeap;
 	VkDeviceSize totalDeviceUsage = 0, totalHostUsage = 0, pseudoDeviceLimit = PSUEDO_DEVICE_LIMIT * 1000000;
 
-	bool isAvailable(VkMemoryRequirements& memReqs, VmaMemoryUsage& memUsage);
+	bool checkAndMoveToGPU(VkMemoryRequirements& memReqs, VmaMemoryUsage& memUsage);
 	VkDeviceSize getRequiredImageSize(VkImageCreateInfo* info);
 
 	void createCmdBuffer();

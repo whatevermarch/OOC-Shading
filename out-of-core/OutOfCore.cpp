@@ -76,20 +76,21 @@ private:
 	}
 
 	void getHeapInfo() {
-		std::cout << "Device Heap Size is " << resMan->getDeviceHeapSize() << std::endl;
-		std::cout << "Host Heap Size is " << resMan->getHostHeapSize() << std::endl;
+		resMan->inspectHeap();
 	}
 
 	void reduceMemoryBound() {
 		resMan->reduceMemoryBound(memoryBoundChangeSize);
-		scene->rebindTexture();
+		if(scene->rebindTexture())
+			rebuildCommandBuffer();
 
 		std::cout << "Reduce Memort Bound Completed!" << std::endl;
 	}
 
 	void extendMemoryBound() {
 		resMan->extendMemoryBound(memoryBoundChangeSize);
-		scene->rebindTexture();
+		if (scene->rebindTexture())
+			rebuildCommandBuffer();
 
 		std::cout << "Extend Memort Bound Completed!" << std::endl;
 	}

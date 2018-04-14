@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="ResourceHeap.h" />
     <ClInclude Include="Scene.h" />
+    <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="VkUtils.h" />
     <ClInclude Include="ResourceManager.h" />
     <ClInclude Include="VkBase.h" />
@@ -29,6 +30,7 @@
     <ClCompile Include="OutOfCore.cpp" />
     <ClCompile Include="ResourceManager.cpp" />
     <ClCompile Include="Scene.cpp" />
+    <ClCompile Include="TextOverlay.cpp" />
     <ClCompile Include="VkBase.cpp" />
   </ItemGroup>
   <ItemGroup>

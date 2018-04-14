@@ -22,8 +22,6 @@ ResourceManager::ResourceManager(VkPhysicalDevice physicalDevice, VkDevice devic
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
 	createCmdBuffer();
 
-	//std::make_heap(deviceHeap.begin(), deviceHeap.end(), [](const Resource* lhs, const Resource* rhs) { return lhs->allocation->GetSize() > rhs->allocation->GetSize(); });
-	//std::make_heap(hostHeap.begin(), hostHeap.end(), [](const Resource* lhs, const Resource* rhs) { return lhs->allocation->GetSize() < rhs->allocation->GetSize(); });
 }
 
 
@@ -205,6 +203,9 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 	if (pData == nullptr)
 		throw std::invalid_argument("f(x):createBufferInDevice needs data to initiate.");
 
+	if (usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
 	Buffer stagingBuffer;
 
 	void* pMappedData;
@@ -260,6 +261,9 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 
 void ResourceManager::createImageInHost(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData)
 {
+	if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) && (pData == nullptr))
+		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
 	void* pMappedData;
 	VkDeviceSize imageSize = width * height * 4;
 
@@ -309,21 +313,21 @@ void ResourceManager::destroyImage(Image &image)
 		totalDeviceUsage -= image.allocation->GetSize();
 		deviceHeap.remove(&image);
 		vmaDestroyImage(allocator, image.image, image.allocation);
-
-		Resource* pRes;
+		
+		//Resource* pRes;
 		VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
 		while (!hostHeap.empty()) {
 			if (hostHeap.top()->allocation->GetSize() + totalDeviceUsage > devLimit) break;
 
-			pRes = hostHeap.top();
-			hostHeap.pop();
+			//pRes = hostHeap.top();
+			//hostHeap.pop();
 
-			migrateResource(*pRes);
+			migrateResource(*hostHeap.top());
 
-			deviceHeap.push(pRes);
+			//deviceHeap.push(pRes);
 			// after this, top has been poped, totalDev is added
 		}
-
+		
 	}
 	else {
 		totalHostUsage -= image.allocation->GetSize();
@@ -410,11 +414,12 @@ void ResourceManager::migrateTexture(Image& texture)
 {
 	if (texture.image == NULL)
 		throw std::runtime_error("Destination texture param does not exist.");
-
-	VmaMemoryUsage memUsage;
+	/*
 	if (texture.isInGPU) {
 		memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
 		texture.isInGPU = false;
+		totalDeviceUsage -= texture.allocation->GetSize();
+		deviceHeap.remove(&texture);
 
 		VkFormatProperties formatProperties;
 		vkGetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_R8G8B8A8_UNORM, &formatProperties);
@@ -424,10 +429,13 @@ void ResourceManager::migrateTexture(Image& texture)
 	else {
 		memUsage = VMA_MEMORY_USAGE_GPU_ONLY;
 		texture.isInGPU = true;
+		totalHostUsage -= texture.allocation->GetSize();
+		hostHeap.remove(&texture);
 	}
 
-	Image destImage;
+	
 
+	
 	createImage(
 		memUsage,
 		texture.width,
@@ -437,11 +445,57 @@ void ResourceManager::migrateTexture(Image& texture)
 		&destImage,
 		nullptr
 	);
+	*/
+	// edit start
+
+	VkImage dstImage;
+	VmaAllocation dstAlloc;
+
+	VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.extent.width = texture.width;
+	imageInfo.extent.height = texture.height;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = texture.format;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	imageInfo.usage = texture.usage;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	VmaAllocationCreateInfo allocCreateInfo = {};
+
+	if (texture.isInGPU) {
+		allocCreateInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
+		texture.isInGPU = false;
+
+		totalDeviceUsage -= texture.allocation->GetSize();
+		deviceHeap.remove(&texture);
+
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, texture.format, &formatProperties);
+		if (!(formatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+			throw std::runtime_error("Secondary Image doesn't support desired format.");
+	}
+	else {
+		allocCreateInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		texture.isInGPU = true;
+
+		totalHostUsage -= texture.allocation->GetSize();
+		hostHeap.remove(&texture);
+	}
+
+	VK_CHECK_RESULT(vmaCreateImage(allocator, &imageInfo, &allocCreateInfo, &dstImage, &dstAlloc, nullptr));
+
+	//edit end
 
 	beginCmdBuffer();
 
 	transitionImageLayout(cmdBuffer, texture.image, texture.lastImgLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	transitionImageLayout(cmdBuffer, destImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 	VkImageCopy copyRegionI = {};
 	copyRegionI.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -464,31 +518,41 @@ void ResourceManager::migrateTexture(Image& texture)
 		cmdBuffer,
 		texture.image,
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		destImage.image,
+		dstImage,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		1,
 		&copyRegionI
 	);
 
-	transitionImageLayout(cmdBuffer, destImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	transitionImageLayout(cmdBuffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	flushCmdBuffer();
 
-	destroyImage(texture);
+	vmaDestroyImage(allocator, texture.image, texture.allocation);
 
-	texture.image = destImage.image;
-	texture.allocation = destImage.allocation;
+	texture.image = dstImage;
+	texture.allocation = dstAlloc;
 	texture.lastImgLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	texture.isBoundToDesc = false;
 
 	vkDestroyImageView(device, texture.view, nullptr);
-	createImageView(texture.image, VK_FORMAT_R8G8B8A8_UNORM, &texture.view);
+	createImageView(texture.image, texture.format, &texture.view);
 
 	texture.updateDescriptorInfo();
+
+	if (texture.isInGPU) {
+		totalDeviceUsage += texture.allocation->GetSize();
+		deviceHeap.push(&texture);
+	}
+	else {
+		totalHostUsage += texture.allocation->GetSize();
+		hostHeap.push(&texture);
+	}
 }
 
 void ResourceManager::migrateBuffer(Buffer & buffer)
 {
+	// deprecate and should not be used this entire f(x)
 	if (buffer.buffer == NULL)
 		throw std::runtime_error("Destination texture param does not exist.");
 
@@ -527,6 +591,7 @@ void ResourceManager::migrateBuffer(Buffer & buffer)
 
 	buffer.allocation = destBuffer.allocation;
 	buffer.buffer = destBuffer.buffer;
+	buffer.isBoundToDesc = false;
 
 	buffer.updateDescriptorInfo();
 }
@@ -536,10 +601,6 @@ void ResourceManager::migrateResource(Resource & resource)
 	if (!resource.isMigratable) 
 		throw std::invalid_argument("You are moving immigratable resource.");
 
-	if (resource.isInGPU)
-		totalDeviceUsage -= resource.allocation->GetSize();
-	else
-		totalHostUsage -= resource.allocation->GetSize();
 
 	if (resource.type == RESOURCE_TYPE_BUFFER)
 		migrateBuffer((Buffer&)resource);
@@ -548,11 +609,6 @@ void ResourceManager::migrateResource(Resource & resource)
 	else
 		throw std::invalid_argument("Cannot indentify resource type.");
 
-	if (resource.isInGPU)
-		totalDeviceUsage += resource.allocation->GetSize();
-	else
-		totalHostUsage += resource.allocation->GetSize();
-
 }
 
 void ResourceManager::reduceMemoryBound(VkDeviceSize amount)
@@ -560,20 +616,14 @@ void ResourceManager::reduceMemoryBound(VkDeviceSize amount)
 	pseudoDeviceLimit -= amount;
 	std::cout << "Now Max Device Memory is " << pseudoDeviceLimit << std::endl;
 
-	std::cout << "Host Heap size : " << hostHeap.size() << std::endl;
-	Resource* pRes;
 	VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
-	while (!deviceHeap.empty() && devLimit < totalDeviceUsage) {
-		// migrateResource will manage totalDevice/HostUsage
-		pRes = deviceHeap.top();
-		deviceHeap.pop();
-		migrateResource(*pRes);
-
-		// heap compare pRes with unknown // something wrong with heap // may edit comapre class operation
-		hostHeap.push(pRes);
-		
+	while (!deviceHeap.empty() && devLimit < totalDeviceUsage)
+	{
+		migrateResource(*deviceHeap.top());
+		std::cout << "Migrate one time" << std::endl;
 	}
-
+	std::cout << "Device Heap size : " << deviceHeap.size() << std::endl;
+	std::cout << "Host Heap size : " << hostHeap.size() << std::endl;
 	std::cout << "Now Total Device Usage is " << totalDeviceUsage << std::endl;
 	std::cout << "Now Total Host Usage is " << totalHostUsage << std::endl;
 }
@@ -583,22 +633,25 @@ void ResourceManager::extendMemoryBound(VkDeviceSize amount)
 	pseudoDeviceLimit += amount;
 	std::cout << "Now Max Device Memory is " << pseudoDeviceLimit << std::endl;
 
-	Resource* pRes;
 	VkDeviceSize devLimit = static_cast<VkDeviceSize>(pseudoDeviceLimit * 0.9);
-	while (!hostHeap.empty()) {
+	while (!hostHeap.empty()) 
+	{
 		if (hostHeap.top()->allocation->GetSize() + totalDeviceUsage > devLimit) break;
 
-		pRes = hostHeap.top();
-		hostHeap.pop();
-
-		migrateResource(*pRes);
-		// crash too
-		deviceHeap.push(pRes);
-		// after this, top has been poped, totalDev is added
+		migrateResource(*hostHeap.top());
 	}
-
+	std::cout << "Device Heap size : " << deviceHeap.size() << std::endl;
+	std::cout << "Host Heap size : " << hostHeap.size() << std::endl;
 	std::cout << "Now Total Device Usage is " << totalDeviceUsage << std::endl;
 	std::cout << "Now Total Host Usage is " << totalHostUsage << std::endl;
+}
+
+void ResourceManager::inspectHeap()
+{
+	std::cout << "For Device : ";
+	deviceHeap.checkMember();
+	std::cout << "For Host : ";
+	hostHeap.checkMember();
 }
 
 VkDeviceSize ResourceManager::getRequiredImageSize(VkImageCreateInfo* info)
@@ -664,13 +717,30 @@ bool gtResource::operator()(Resource * const &lhs, Resource * const &rhs)
 
 bool ResourceHeap::remove(const Resource * value)
 {
-	auto it = std::find(this->c.begin(), this->c.end(), value);
-	if (it != this->c.end()) {
-		this->c.erase(it);
-		std::make_heap(this->c.begin(), this->c.end(), this->comp);
+	if (value == this->top()) {
+		this->pop();
 		return true;
 	}
 	else {
-		return false;
+		auto it = std::find(this->c.begin(), this->c.end(), value);
+		if (it != this->c.end()) {
+			this->c.erase(it);
+			std::make_heap(this->c.begin(), this->c.end(), this->comp);
+			return true;
+		}
+		else {
+			return false;
+		}
 	}
+}
+
+void ResourceHeap::checkMember()
+{
+	for (auto e : this->c) {
+		if (e->type == RESOURCE_TYPE_IMAGE)
+			std::cout << "exist ";
+		else 
+			std::cout << "nah ";
+	}
+	std::cout << std::endl;
 }

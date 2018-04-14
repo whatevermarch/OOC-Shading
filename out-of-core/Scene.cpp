@@ -90,12 +90,15 @@ void Scene::render(VkCommandBuffer cmdBuffer)
 
 }
 
-void Scene::rebindTexture()
+bool Scene::rebindTexture()
 {
+	bool needRebind = false;
 	// Material descriptor sets
 	for (size_t i = 0; i < materials.size(); i++)
 	{
 		if (materials[i].diffuse.image.isBoundToDesc) continue;
+
+		needRebind = true;
 
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
 		descriptorWrites.resize(1);
@@ -110,7 +113,11 @@ void Scene::rebindTexture()
 		descriptorWrites[0].pImageInfo = &materials[i].diffuse.image.descInfo;
 
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, NULL);
+
+		materials[i].diffuse.image.isBoundToDesc = true;
 	}
+
+	return needRebind;
 }
 
 void Scene::extractMeshes(const aiScene *scene)
@@ -374,7 +381,7 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 		texWidth,
 		texHeight,
 		format,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		VK_IMAGE_USAGE_SAMPLED_BIT,
 		&texture->image,
 		pixels
 	);

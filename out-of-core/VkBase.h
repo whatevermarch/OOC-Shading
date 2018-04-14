@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 
 #include "ResourceManager.h"
+#include "TextOverlay.h"
 
 #define DEFAULT_FENCE_TIMEOUT 100000000000
 
@@ -52,7 +53,9 @@ protected:
 
 	VkDevice device;
 
-	ResourceManager *resMan;
+	ResourceManager *resMan = nullptr;
+
+	TextOverlay *textUI = nullptr;
 
 	VkCommandPool cmdPool;
 
@@ -106,6 +109,9 @@ protected:
 	void createDrawCmdBuffer();
 
 private:
+	float fpsTimer = 0.0f;
+	uint32_t lastFPS = 0;
+
 	VkSurfaceKHR surface;
 
 	VkDebugReportCallbackEXT debReportClbk;
@@ -131,7 +137,8 @@ private:
 	void createPipelineCache();
 
 	void renderLoop();
-	// void fpsCounter();
+
+	void updatePerfValue();
 
 	// support functions
 	bool checkValidationLayerSupport();
