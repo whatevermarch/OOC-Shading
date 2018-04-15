@@ -28,7 +28,7 @@
 	if (res != VK_SUCCESS)																				\
 	{																									\
 		std::ostringstream err_msg;																			\
-		err_msg << "Fatal : VkResult is \"" << res << "\" in " << __FILE__ << " at line " << __LINE__ << std::endl; \
+		err_msg << "Fatal : VkResult is \"" << res << "\" in " << __FILE__ << " at line " << __LINE__ << std::endl << std::endl; \
 		throw std::runtime_error(err_msg.str());															\
 	}																									\
 }

@@ -119,7 +119,9 @@
     </Link>
     <PreBuildEvent>
       <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.vert.spv -V $(ProjectDir)shaders\scene.vert
-C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag</Command>
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\text.vert.spv -V $(ProjectDir)shaders\text.vert
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\text.frag.spv -V $(ProjectDir)shaders\text.frag</Command>
     </PreBuildEvent>
     <PreBuildEvent>
       <Message>Compile shaders to spir-v format</Message>
@@ -171,7 +173,9 @@ C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.fra
     </Link>
     <PreBuildEvent>
       <Command>C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.vert.spv -V $(ProjectDir)shaders\scene.vert
-C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag</Command>
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\scene.frag.spv -V $(ProjectDir)shaders\scene.frag
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\text.vert.spv -V $(ProjectDir)shaders\text.vert
+C:\VulkanSDK\1.0.54.0\Bin\glslangValidator.exe -o $(ProjectDir)shaders\text.frag.spv -V $(ProjectDir)shaders\text.frag</Command>
     </PreBuildEvent>
     <PreBuildEvent>
       <Message>Compile shaders to spir-v format</Message>

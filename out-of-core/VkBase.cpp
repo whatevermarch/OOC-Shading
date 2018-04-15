@@ -1,6 +1,6 @@
 #include "VkBase.h"
 
-
+#include <chrono>
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -60,6 +60,7 @@ VkBase::~VkBase()
 
 	vkDestroyCommandPool(device, cmdPool, nullptr);
 
+	delete textUI;
 	delete resMan;
 
 	vkDestroyDevice(device, nullptr);
@@ -78,26 +79,31 @@ void VkBase::prepare()
 	createCommandPool();
 	createDrawCmdBuffer();
 	createStandardSemaphores();
-	createPipelineCache();
 	setupResourceManager();
+	createPipelineCache();
+	createDepthStencil();
+	createRenderPass();
+	createFrameBuffer();
+	
 
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
 	shaderStages.resize(2);
 
 	shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-	shaderStages[0].module = loadSPIRVShader("shaders/base/textoverlay.vert.spv");
+	shaderStages[0].module = loadSPIRVShader("shaders/text.vert.spv");
 	shaderStages[0].pName = "main";
 	assert(shaderStages[0].module != VK_NULL_HANDLE);
 
 	shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	shaderStages[1].module = loadSPIRVShader("shaders/base/textoverlay.frag.spv");
+	shaderStages[1].module = loadSPIRVShader("shaders/text.frag.spv");
 	shaderStages[1].pName = "main";
 	assert(shaderStages[1].module != VK_NULL_HANDLE);
 
 	textUI = new TextOverlay(
 		device,
+		cmdPool,
 		resMan,
 		swapChain.framebuffers,
 		swapChain.imageFormat,
@@ -108,6 +114,35 @@ void VkBase::prepare()
 	);
 
 	updatePerfValue();
+}
+
+// Get next image in the swap chain (back/front buffer)
+void VkBase::prepareFrame()
+{
+	vkQueueWaitIdle(stdQueues.present);
+
+	VK_CHECK_RESULT(vkAcquireNextImageKHR(device, swapChain.handle, std::numeric_limits<uint64_t>::max(), stdSemaphores.presentComplete, VK_NULL_HANDLE, &currentBuffer));
+}
+
+// Present the current buffer to the swap chain
+// Pass the semaphore signaled by the command buffer submission from the submit info as the wait semaphore for swap chain presentation
+// This ensures that the image is not presented to the windowing system until all commands have been submitted
+//VK_CHECK_RESULT(swapChain.queuePresent(queue, currentBuffer, renderCompleteSemaphore));
+void VkBase::submitFrame()
+{
+	// text overlay
+	textUI->submit(stdQueues.graphic, currentBuffer, stdSemaphores.renderComplete);
+
+	// present queue
+	VkPresentInfoKHR presentInfo = {};
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = (textUI->visible) ? textUI->getTextOverlaySemaphorePtr() : &stdSemaphores.renderComplete;
+	presentInfo.swapchainCount = 1;
+	presentInfo.pSwapchains = &swapChain.handle;
+	presentInfo.pImageIndices = &currentBuffer;
+
+	VK_CHECK_RESULT(vkQueuePresentKHR(stdQueues.present, &presentInfo));
 }
 
 void VkBase::renderLoop()
@@ -141,19 +176,20 @@ void VkBase::updatePerfValue()
 	textUI->beginTextUpdate();
 
 	// 20.0f each line
-
-	textUI->addText("Performance Details - " + std::string(deviceProperties.deviceName), 5.0f, 5.0f, TextOverlay::alignLeft);
+	std::string header("Performance Details - ");
+	header.append(deviceProperties.deviceName);
+	textUI->addText(header.c_str(), 5.0f, 5.0f, TextOverlay::alignLeft);
 
 	std::stringstream ss;
 	ss << std::fixed << std::setprecision(3) << "FPS : " << lastFPS;
 	textUI->addText(ss.str(), 5.0f, 25.0f, TextOverlay::alignLeft);
 
-	ss.clear();
-	ss << std::fixed << std::setprecision(3) << "Total Device Usage : " << lastFPS << " MBs"; // resMan->getDeviceUsage();
+	ss.str(std::string());
+	ss << std::fixed << std::setprecision(3) << "Total Device Usage : " << resMan->getDeviceUsage() / 1000000.0f << " MBs"; // resMan->getDeviceUsage();
 	textUI->addText(ss.str(), 5.0f, 45.0f, TextOverlay::alignLeft);
 
-	ss.clear();
-	ss << std::fixed << std::setprecision(3) << "Total Host Usage : " << lastFPS << " MBs"; // resMan->getHostUsage();
+	ss.str(std::string());
+	ss << std::fixed << std::setprecision(3) << "Total Host Usage : " << resMan->getHostUsage() / 1000000.0f << " MBs"; // resMan->getHostUsage();
 	textUI->addText(ss.str(), 5.0f, 65.0f, TextOverlay::alignLeft);
 
 	// getOverlayText(textUI); future work - pure virtual f(x)
@@ -236,7 +272,7 @@ void VkBase::flushCmdBuffer(VkCommandBuffer cmdBuffer)
 VkShaderModule VkBase::loadSPIRVShader(std::string filePath)
 {
 	size_t shaderSize;
-	char* shaderCode;
+	char* shaderCode = nullptr;
 
 	std::ifstream is(filePath.c_str(), std::ios::binary | std::ios::in | std::ios::ate);
 
@@ -401,7 +437,7 @@ void VkBase::setupDevice()
 		throw std::runtime_error("failed to find a suitable GPU!");
 	}
 
-	//vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+	vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
 	//vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
 	//vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
 
@@ -564,6 +600,152 @@ void VkBase::createCommandPool()
 	cmdPoolInfo.queueFamilyIndex = queueFamilyIndices.graphic;
 	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &cmdPool));
+}
+
+void VkBase::createDepthStencil()
+{
+	// Create an optimal image used as the depth stencil attachment
+	VkImageCreateInfo image = {};
+	image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	image.imageType = VK_IMAGE_TYPE_2D;
+	image.format = depthFormat;
+	// Use example's height and width
+	image.extent = { screenWidth, screenHeight, 1 };
+	image.mipLevels = 1;
+	image.arrayLayers = 1;
+	image.samples = VK_SAMPLE_COUNT_1_BIT;
+	image.tiling = VK_IMAGE_TILING_OPTIMAL;
+	image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &depthStencil.image));
+
+	// Allocate memory for the image (device local) and bind it to our image
+	VkMemoryAllocateInfo memAlloc = {};
+	memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	VkMemoryRequirements memReqs;
+	vkGetImageMemoryRequirements(device, depthStencil.image, &memReqs);
+	memAlloc.allocationSize = memReqs.size;
+	memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &depthStencil.mem));
+	VK_CHECK_RESULT(vkBindImageMemory(device, depthStencil.image, depthStencil.mem, 0));
+
+	VkImageViewCreateInfo depthStencilView = {};
+	depthStencilView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	depthStencilView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	depthStencilView.format = depthFormat;
+	depthStencilView.subresourceRange = {};
+	depthStencilView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+	depthStencilView.subresourceRange.baseMipLevel = 0;
+	depthStencilView.subresourceRange.levelCount = 1;
+	depthStencilView.subresourceRange.baseArrayLayer = 0;
+	depthStencilView.subresourceRange.layerCount = 1;
+	depthStencilView.image = depthStencil.image;
+	VK_CHECK_RESULT(vkCreateImageView(device, &depthStencilView, nullptr, &depthStencil.view));
+}
+
+void VkBase::createRenderPass()
+{
+	// This example will use a single render pass with one subpass
+
+	// Descriptors for the attachments used by this renderpass
+	std::array<VkAttachmentDescription, 2> attachments = {};
+
+	// Color attachment
+	attachments[0].format = swapChain.imageFormat;									// Use the color format selected by the swapchain
+	attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;									// We don't use multi sampling in this example
+	attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;							// Clear this attachment at the start of the render pass
+	attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;							// Keep it's contents after the render pass is finished (for displaying it)
+	attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;					// We don't use stencil, so don't care for load
+	attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;				// Same for store
+	attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;						// Layout at render pass start. Initial doesn't matter, so we use undefined
+	attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;					// Layout to which the attachment is transitioned when the render pass is finished
+																					// As we want to present the color buffer to the swapchain, we transition to PRESENT_KHR	
+																					// Depth attachment
+	attachments[1].format = depthFormat;											// A proper depth format is selected in the example base
+	attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+	attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;							// Clear depth at start of first subpass
+	attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;						// We don't need depth after render pass has finished (DONT_CARE may result in better performance)
+	attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;					// No stencil
+	attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;				// No Stencil
+	attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;						// Layout at render pass start. Initial doesn't matter, so we use undefined
+	attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;	// Transition to depth/stencil attachment
+
+																					// Setup attachment references
+	VkAttachmentReference colorReference = {};
+	colorReference.attachment = 0;													// Attachment 0 is color
+	colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;				// Attachment layout used as color during the subpass
+
+	VkAttachmentReference depthReference = {};
+	depthReference.attachment = 1;													// Attachment 1 is color
+	depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;		// Attachment used as depth/stemcil used during the subpass
+
+																					// Setup a single subpass reference
+	VkSubpassDescription subpassDescription = {};
+	subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	subpassDescription.colorAttachmentCount = 1;									// Subpass uses one color attachment
+	subpassDescription.pColorAttachments = &colorReference;							// Reference to the color attachment in slot 0
+	subpassDescription.pDepthStencilAttachment = &depthReference;					// Reference to the depth attachment in slot 1
+	subpassDescription.inputAttachmentCount = 0;									// Input attachments can be used to sample from contents of a previous subpass
+	subpassDescription.pInputAttachments = nullptr;									// (Input attachments not used by this example)
+	subpassDescription.preserveAttachmentCount = 0;									// Preserved attachments can be used to loop (and preserve) attachments through subpasses
+	subpassDescription.pPreserveAttachments = nullptr;								// (Preserve attachments not used by this example)
+	subpassDescription.pResolveAttachments = nullptr;								// Resolve attachments are resolved at the end of a sub pass and can be used for e.g. multi sampling
+
+	std::array<VkSubpassDependency, 2> dependencies;
+
+	dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;								// Producer of the dependency 
+	dependencies[0].dstSubpass = 0;													// Consumer is our single subpass that will wait for the execution depdendency
+	dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+	// Second dependency at the end the renderpass
+	// Does the transition from the initial to the final layout
+	dependencies[1].srcSubpass = 0;													// Producer of the dependency is our single subpass
+	dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;								// Consumer are all commands outside of the renderpass
+	dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+	// Create the actual renderpass
+	VkRenderPassCreateInfo renderPassInfo = {};
+	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+	renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());		// Number of attachments used by this render pass
+	renderPassInfo.pAttachments = attachments.data();								// Descriptions of the attachments used by the render pass
+	renderPassInfo.subpassCount = 1;												// We only use one subpass in this example
+	renderPassInfo.pSubpasses = &subpassDescription;								// Description of that subpass
+	renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());	// Number of subpass dependencies
+	renderPassInfo.pDependencies = dependencies.data();								// Subpass dependencies used by the render pass
+
+	VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass));
+}
+
+void VkBase::createFrameBuffer()
+{
+	// Create a frame buffer for every image in the swapchain
+	swapChain.framebuffers.resize(swapChain.imageViews.size());
+	for (size_t i = 0; i < swapChain.framebuffers.size(); i++)
+	{
+		std::array<VkImageView, 2> attachments;
+		attachments[0] = swapChain.imageViews[i];									// Color attachment is the view of the swapchain image			
+		attachments[1] = depthStencil.view;											// Depth/Stencil attachment is the same for all frame buffers			
+
+		VkFramebufferCreateInfo frameBufferCreateInfo = {};
+		frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		// All frame buffers use the same renderpass setup
+		frameBufferCreateInfo.renderPass = renderPass;
+		frameBufferCreateInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+		frameBufferCreateInfo.pAttachments = attachments.data();
+		frameBufferCreateInfo.width = screenWidth;
+		frameBufferCreateInfo.height = screenHeight;
+		frameBufferCreateInfo.layers = 1;
+		// Create the framebuffer
+		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCreateInfo, nullptr, &swapChain.framebuffers[i]));
+	}
 }
 
 void VkBase::createDrawCmdBuffer()

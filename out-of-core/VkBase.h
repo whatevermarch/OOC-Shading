@@ -63,6 +63,8 @@ protected:
 
 	VkPipelineCache pipelineCache;
 
+	VkRenderPass renderPass;
+
 	struct {
 		// graphic queue
 		VkQueue graphic;
@@ -88,6 +90,8 @@ protected:
 		std::vector<VkFramebuffer> framebuffers;
 	} swapChain;
 
+	uint32_t currentBuffer;
+
 	struct {
 		VkImage image;
 		VkDeviceMemory mem;
@@ -99,6 +103,9 @@ protected:
 	virtual void prepare();
 
 	virtual void render() = 0;
+
+	void prepareFrame();
+	void submitFrame();
 
 	// support functions
 	uint32_t getMemoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags properties);
@@ -113,6 +120,8 @@ private:
 	uint32_t lastFPS = 0;
 
 	VkSurfaceKHR surface;
+
+	
 
 	VkDebugReportCallbackEXT debReportClbk;
 
@@ -132,6 +141,9 @@ private:
 	
 	void createSwapChain();
 	void createCommandPool();
+	void createDepthStencil();
+	void createRenderPass();
+	void createFrameBuffer();
 	
 	void createStandardSemaphores();
 	void createPipelineCache();

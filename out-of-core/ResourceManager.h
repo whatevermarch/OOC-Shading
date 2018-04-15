@@ -88,7 +88,7 @@ public:
 	void createBufferInHost(VkDeviceSize size, VkBufferUsageFlags usage, Buffer *buffer, void* pData);
 
 	void createImage(VmaMemoryUsage memUsage, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void **pPersistentlyMappedData);
-	void createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void* pData);
+	void createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void* pData, VkDeviceSize imageSize);
 	void createImageInHost(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void* pData);
 
 	void mapMemory(VmaAllocation allocation, void** ppData);
@@ -113,6 +113,9 @@ public:
 	inline size_t getDeviceHeapSize() { return deviceHeap.size(); }
 	inline size_t getHostHeapSize() { return hostHeap.size(); }
 	void inspectHeap();
+
+	inline VkDeviceSize getDeviceUsage() { return totalDeviceUsage; }
+	inline VkDeviceSize getHostUsage() { return totalHostUsage; }
 
 private:
 	VmaAllocator allocator;

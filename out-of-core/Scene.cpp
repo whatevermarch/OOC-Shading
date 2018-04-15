@@ -376,6 +376,7 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 	if (!pixels) {
 		throw std::runtime_error("failed to load texture image!");
 	}
+	VkDeviceSize textSize = texWidth * texHeight * 4;
 
 	resMan->createImageInDevice(
 		texWidth,
@@ -383,7 +384,8 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 		format,
 		VK_IMAGE_USAGE_SAMPLED_BIT,
 		&texture->image,
-		pixels
+		pixels,
+		textSize
 	);
 
 	stbi_image_free(pixels);

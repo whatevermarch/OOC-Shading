@@ -198,18 +198,18 @@ void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint3
 
 }
 
-void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData)
+void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, Image *image, void * pData, VkDeviceSize imageSize)
 {
 	if (pData == nullptr)
 		throw std::invalid_argument("f(x):createBufferInDevice needs data to initiate.");
 
 	if (usage & VK_IMAGE_USAGE_SAMPLED_BIT)
-		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 	Buffer stagingBuffer;
 
 	void* pMappedData;
-	VkDeviceSize imageSize = width * height * 4;
+	//VkDeviceSize imageSize = width * height * 4;
 
 	createBuffer(
 		VMA_MEMORY_USAGE_CPU_ONLY,

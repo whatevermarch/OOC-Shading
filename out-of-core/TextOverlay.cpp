@@ -30,6 +30,13 @@ TextOverlay::TextOverlay(VkDevice device,
 	this->frameBufferHeight = framebufferheight;
 
 	cmdBuffers.resize(framebuffers.size());
+
+	VkSemaphoreCreateInfo semInfo = {};
+	semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+	VK_CHECK_RESULT(vkCreateSemaphore(device, &semInfo, nullptr, &textOverlayComplete));
+
+	prepareCmdBuffers();
 	prepareResources();
 	prepareRenderPass();
 	preparePipeline();
@@ -39,11 +46,6 @@ TextOverlay::TextOverlay(VkDevice device,
 TextOverlay::~TextOverlay()
 {
 	vkDestroySampler(device, sampler, nullptr);
-	//vkDestroyImage(device, image, nullptr);
-	//vkDestroyImageView(device, view, nullptr);
-	//vkDestroyBuffer(device, buffer, nullptr);
-	//vkFreeMemory(device, memory, nullptr);
-	//vkFreeMemory(device, imageMemory, nullptr);
 	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 	vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -189,19 +191,38 @@ void TextOverlay::updateCommandBuffers()
 	}
 }
 
-void TextOverlay::submit(VkQueue queue, uint32_t bufferindex)
+void TextOverlay::submit(VkQueue queue, uint32_t bufferindex, VkSemaphore &waitSemaphore)
 {
 	if (!visible)
 	{
 		return;
 	}
 
+	VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
 	VkSubmitInfo submitInfo = {};
-	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; submitInfo.commandBufferCount = 1;
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; 
+	submitInfo.pWaitDstStageMask = &stageFlags;
+	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &cmdBuffers[bufferindex];
+	submitInfo.waitSemaphoreCount = 1;
+	submitInfo.pWaitSemaphores = &waitSemaphore;
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = &textOverlayComplete;
 
 	VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 	VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+}
+
+void TextOverlay::prepareCmdBuffers()
+{
+	VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
+	cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cmdBufAllocateInfo.commandPool = commandPool;
+	cmdBufAllocateInfo.commandBufferCount = (uint32_t)cmdBuffers.size();
+
+	VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, cmdBuffers.data()));
 }
 
 void TextOverlay::prepareResources()
@@ -223,7 +244,8 @@ void TextOverlay::prepareResources()
 		VK_FORMAT_R8_UNORM,
 		VK_IMAGE_USAGE_SAMPLED_BIT,
 		&fontTexture,
-		nullptr
+		&font24pixels[0][0],
+		STB_FONT_WIDTH * STB_FONT_HEIGHT
 	);
 
 	// Img View
@@ -250,7 +272,7 @@ void TextOverlay::prepareResources()
 
 	// Descriptor
 	// Font uses a separate descriptor pool
-	std::array<VkDescriptorPoolSize, 1> poolSizes;
+	std::array<VkDescriptorPoolSize, 1> poolSizes = {};
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	poolSizes[0].descriptorCount = 1;
 
@@ -262,7 +284,7 @@ void TextOverlay::prepareResources()
 	VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
 	// Descriptor set layout
-	std::array<VkDescriptorSetLayoutBinding, 1> setLayoutBindings;
+	std::array<VkDescriptorSetLayoutBinding, 1> setLayoutBindings = {};
 	setLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	setLayoutBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	setLayoutBindings[0].binding = 0;
@@ -289,7 +311,7 @@ void TextOverlay::prepareResources()
 	descriptorSetAllocInfo.descriptorSetCount = 1;
 	VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocInfo, &descriptorSet));
 
-	std::array<VkWriteDescriptorSet, 1> writeDescriptorSets;
+	std::array<VkWriteDescriptorSet, 1> writeDescriptorSets = {};
 	writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 	writeDescriptorSets[0].dstSet = descriptorSet;
 	writeDescriptorSets[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

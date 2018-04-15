@@ -42,7 +42,9 @@ public:
 
 	void updateCommandBuffers();
 
-	void submit(VkQueue queue, uint32_t bufferindex);
+	void submit(VkQueue queue, uint32_t bufferindex, VkSemaphore &waitSemaphore);
+
+	inline VkSemaphore* getTextOverlaySemaphorePtr() { return &textOverlayComplete; };
 
 private:
 	VkDevice device;
@@ -56,6 +58,8 @@ private:
 	uint32_t *frameBufferHeight;
 
 	VkSampler sampler;
+
+	VkSemaphore textOverlayComplete;
 
 	// will be replace by my object
 	//VkImage image;
@@ -85,6 +89,7 @@ private:
 	stb_fontchar stbFontData[STB_NUM_CHARS];
 	uint32_t numLetters;
 
+	void prepareCmdBuffers();
 	void prepareResources();
 	void preparePipeline();
 	void prepareRenderPass();
