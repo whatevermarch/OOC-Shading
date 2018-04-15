@@ -203,13 +203,12 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 	if (pData == nullptr)
 		throw std::invalid_argument("f(x):createBufferInDevice needs data to initiate.");
 
-	if (usage & VK_IMAGE_USAGE_SAMPLED_BIT)
-		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	if (usage & VK_IMAGE_USAGE_SAMPLED_BIT && format == VK_FORMAT_R8G8B8A8_UNORM)
+		usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
 	Buffer stagingBuffer;
 
 	void* pMappedData;
-	//VkDeviceSize imageSize = width * height * 4;
 
 	createBuffer(
 		VMA_MEMORY_USAGE_CPU_ONLY,
@@ -226,7 +225,7 @@ void ResourceManager::createImageInDevice(uint32_t width, uint32_t height, VkFor
 		width,
 		height,
 		format,
-		usage,
+		usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 		image,
 		nullptr
 	);

@@ -45,7 +45,9 @@ TextOverlay::TextOverlay(VkDevice device,
 
 TextOverlay::~TextOverlay()
 {
+	vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(cmdBuffers.size()), cmdBuffers.data());
 	vkDestroySampler(device, sampler, nullptr);
+	vkDestroySemaphore(device, textOverlayComplete, nullptr);
 	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 	vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);

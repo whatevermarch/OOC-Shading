@@ -92,11 +92,7 @@ protected:
 
 	uint32_t currentBuffer;
 
-	struct {
-		VkImage image;
-		VkDeviceMemory mem;
-		VkImageView view;
-	} depthStencil;
+	Image depthStencil;
 
 	virtual void setupInputHndCallback() = 0;
 
@@ -120,8 +116,6 @@ private:
 	uint32_t lastFPS = 0;
 
 	VkSurfaceKHR surface;
-
-	
 
 	VkDebugReportCallbackEXT debReportClbk;
 

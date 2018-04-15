@@ -1,6 +1,7 @@
 #include "VkBase.h"
 
 #include <chrono>
+#include <iomanip>
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -158,7 +159,7 @@ void VkBase::renderLoop()
 		auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
 
 		fpsTimer += (float)tDiff; // need
-		if (fpsTimer > 1000.0f)
+		if (fpsTimer > 500.0f)
 		{
 			lastFPS = static_cast<uint32_t>(1000.0f / (float)tDiff); // need
 
@@ -603,7 +604,7 @@ void VkBase::createCommandPool()
 }
 
 void VkBase::createDepthStencil()
-{
+{/*
 	// Create an optimal image used as the depth stencil attachment
 	VkImageCreateInfo image = {};
 	image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -628,6 +629,16 @@ void VkBase::createDepthStencil()
 	memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &depthStencil.mem));
 	VK_CHECK_RESULT(vkBindImageMemory(device, depthStencil.image, depthStencil.mem, 0));
+	*/
+	resMan->createImage(
+		VMA_MEMORY_USAGE_GPU_ONLY,
+		screenWidth,
+		screenHeight,
+		depthFormat,
+		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		&depthStencil,
+		nullptr
+	);
 
 	VkImageViewCreateInfo depthStencilView = {};
 	depthStencilView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -641,6 +652,7 @@ void VkBase::createDepthStencil()
 	depthStencilView.subresourceRange.layerCount = 1;
 	depthStencilView.image = depthStencil.image;
 	VK_CHECK_RESULT(vkCreateImageView(device, &depthStencilView, nullptr, &depthStencil.view));
+
 }
 
 void VkBase::createRenderPass()

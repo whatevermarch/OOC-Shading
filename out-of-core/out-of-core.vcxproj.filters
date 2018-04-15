@@ -30,9 +30,6 @@
     <ClInclude Include="Scene.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ResourceHeap.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="TextOverlay.h">
       <Filter>Header Files</Filter>
     </ClInclude>

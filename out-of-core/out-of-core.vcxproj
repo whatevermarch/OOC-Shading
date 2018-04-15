@@ -19,7 +19,6 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ResourceHeap.h" />
     <ClInclude Include="Scene.h" />
     <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="VkUtils.h" />
