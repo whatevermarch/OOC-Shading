@@ -160,10 +160,45 @@ void ResourceManager::createImage(VmaMemoryUsage memUsage, uint32_t width, uint3
 		memUsage == VMA_MEMORY_USAGE_GPU_ONLY && 
 		totalDeviceUsage + resSize > devLimit)
 	{
-		memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
-		resSize = getRequiredImageSize(&imageInfo);
-		std::cout << "Image go for host instead" << std::endl;
+		VkDeviceSize devUsage = totalDeviceUsage + resSize;
+		VkDeviceSize oldSpace = devLimit - totalDeviceUsage;
+
+		std::vector<Resource*> URNotTheFace;
+		Resource* pSmallestResource = nullptr;
+		VkDeviceSize smallestResourceSize = 0;
+		
+		while (devUsage > devLimit) {
+			pSmallestResource = deviceHeap.top();
+			smallestResourceSize = pSmallestResource->allocation->GetSize();
+
+			if (smallestResourceSize >= resSize) {
+				devUsage -= resSize;
+				break;
+			}
+
+			deviceHeap.pop();
+			URNotTheFace.push_back(pSmallestResource);
+			devUsage -= smallestResourceSize;
+		}
+
+		// push back because migrate:f(x) will mess with pop op.
+		// but temp vector is now sorted from small to big
+		for (Resource* res : URNotTheFace)
+			deviceHeap.push(res);
+
+		if (devLimit - devUsage < oldSpace) { // worthier
+			for (Resource* res : URNotTheFace) {
+				migrateResource(*res);
+			}
+			std::cout << "Still go for device" << std::endl;
+		}
+		else { // not worth
+			// new one go to host
+			memUsage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+			imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
+			resSize = getRequiredImageSize(&imageInfo);
+			std::cout << "Image go for host instead" << std::endl;
+		}
 	}
 
 	VmaAllocationCreateInfo allocCreateInfo = {};

@@ -35,7 +35,7 @@ Scene::~Scene()
 void Scene::import(const std::string & filePath)
 {
 	Assimp::Importer importer;
-	const aiScene *scene = importer.ReadFile(filePath, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals );
+	const aiScene *scene = importer.ReadFile(filePath, aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs);
 
 	if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 	{
@@ -226,15 +226,22 @@ void Scene::extractMaterials(const aiScene * scene)
 			std::cout << "  Diffuse: \"" << texturefile.C_Str() << "\"" << std::endl;
 			std::string fileName = std::string(texturefile.C_Str());
 			std::replace(fileName.begin(), fileName.end(), '\\', '/');
-			loadTextureFromFile(assetPath + fileName, texFormat, &materials[i].diffuse);
-			materials[i].diffuse.name = fileName;
-			materials[i].diffuse.type = TEXTURE_TYPE_DIFFUSE;
+			if (!loadTextureFromFile(assetPath + fileName, texFormat, &materials[i].diffuse)) {
+				std::cout << "Cannot load required texture, using dummy texture!" << std::endl;
+				loadTextureFromFile("models/dummy_texture.png", VK_FORMAT_R8G8B8A8_UNORM, &materials[i].diffuse);
+				materials[i].diffuse.name = std::string("dummy_texture_" + i);
+				materials[i].diffuse.type = TEXTURE_TYPE_DIFFUSE;
+			}
+			else {
+				materials[i].diffuse.name = fileName;
+				materials[i].diffuse.type = TEXTURE_TYPE_DIFFUSE;
+			}
 		}
 		else
 		{
 			std::cout << "  Material has no diffuse, using dummy texture!" << std::endl;
 			loadTextureFromFile("models/dummy_texture.png", VK_FORMAT_R8G8B8A8_UNORM, &materials[i].diffuse);
-			materials[i].diffuse.name = std::string("dummy_" + i);
+			materials[i].diffuse.name = std::string("dummy_texture_" + i);
 			materials[i].diffuse.type = TEXTURE_TYPE_DIFFUSE;
 		}
 
@@ -360,7 +367,7 @@ void Scene::extractMaterials(const aiScene * scene)
 
 }
 
-void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, Texture * texture)
+bool Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, Texture * texture)
 {
 	/*
 	for (std::string textureName : loadedTexture) {
@@ -374,7 +381,7 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 
 	stbi_uc* pixels = stbi_load(fileName.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 	if (!pixels) {
-		throw std::runtime_error("failed to load texture image!");
+		return false;
 	}
 	VkDeviceSize textSize = texWidth * texHeight * 4;
 
@@ -393,6 +400,8 @@ void Scene::loadTextureFromFile(const std::string & fileName, VkFormat format, T
 	resMan->createImageView(texture->image.image, texture->image.format, &texture->image.view);
 	texture->image.sampler = defaultSampler;
 	texture->image.updateDescriptorInfo();
+
+	return true;
 
 }
 

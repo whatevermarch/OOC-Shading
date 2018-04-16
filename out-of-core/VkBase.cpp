@@ -483,13 +483,6 @@ void VkBase::setupDevice()
 
 	vkGetDeviceQueue(device, queueFamilyIndices.graphic, 0, &stdQueues.graphic);
 	vkGetDeviceQueue(device, queueFamilyIndices.present, 0, &stdQueues.present);
-	/*
-	VmaAllocatorCreateInfo allocatorInfo = {};
-	allocatorInfo.physicalDevice = physicalDevice;
-	allocatorInfo.device = device;
-
-	VK_CHECK_RESULT(vmaCreateAllocator(&allocatorInfo, &allocator));
-	*/
 }
 
 void VkBase::setupResourceManager()

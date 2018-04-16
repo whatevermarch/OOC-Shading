@@ -9,7 +9,7 @@
 #include <algorithm>
 
 
-#define PSUEDO_DEVICE_LIMIT 40 // in MBs
+#define PSUEDO_DEVICE_LIMIT 20 // in MBs
 
 enum ResourceType {
 	RESOURCE_TYPE_BUFFER = 0,

@@ -22,7 +22,7 @@ layout(push_constant) uniform Material
 layout (location = 0) out vec4 outFragColor;
 
 void main() {
-    vec4 color = texture(samplerColorMap, inUV) * vec4(inColor, 1.0);
+    vec4 color = texture(samplerColorMap, inUV); //* vec4(inColor, 1.0);
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(inLightVec);
 	vec3 V = normalize(inViewVec);

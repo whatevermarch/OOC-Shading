@@ -117,7 +117,7 @@ public:
 		glm::mat4 projection;
 		glm::mat4 view;
 		glm::mat4 model;
-		glm::vec4 lightPos = glm::vec4(1.25f, 8.35f, 0.0f, 0.0f);
+		glm::vec4 lightPos = glm::vec4(0.0f, 20.0f, 10.0f, 0.0f);
 	} uniformData;
 
 	VkPipelineLayout pipelineLayout;
@@ -162,7 +162,7 @@ private:
 	void extractMeshes(const aiScene *scene);
 	void extractMaterials(const aiScene *scene);
 
-	void loadTextureFromFile(const std::string & fileName, VkFormat format, Texture *texture);
+	bool loadTextureFromFile(const std::string & fileName, VkFormat format, Texture *texture);
 	//Mesh processMesh(aiMesh * aMesh);
 	//std::vector<Texture> loadMaterialTextures(aiMaterial *mat, aiTextureType type);
 	//Image importTextureFromFile(const std::string& filePath);
