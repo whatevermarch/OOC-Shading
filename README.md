@@ -2,7 +2,7 @@
 This project is to migrate shader resources (texture, etc.) between host and device (GPU) for extended memory space by taking advantage of [Vulkan](https://www.khronos.org/vulkan/)'s memory management ability.
 
 ### WARNING!! 
-The source code has not been completely refactored and commented (In Progress). If you are interested in the methodology, please have a look at `ResourceManager.cpp` and start at `ResourceManager::createImage`.
+Although the project is completed, the source code has not been completely refactored and commented (In Progress). If you are interested in the methodology, please have a look at `ResourceManager.cpp` and start at `ResourceManager::createImage`.
 
 ## Tools
 - [Vulkan SDK](https://www.lunarg.com/vulkan-sdk/) (for sure)
