@@ -4,6 +4,9 @@ This project is to migrate shader resources (texture (completed), etc. (future w
 ### WARNING!! 
 Although the project is completed (only for texture migration), the source code has not been completely refactored and commented (In Progress). If you are interested in the methodology, please have a look at `ResourceManager.cpp` and start at `ResourceManager::createImage`.
 
+### Caveats
+At startup of the demo program, as investigated, the device usage seems to exceed the expected limit. That is because the program constructs textures first, and then buffers. The method `ResourceManager::createBuffer` has not been implemented completely yet, which makes the buffers non-migratable right now. But the migration works properly after changing device memory pseudolimit.
+
 ## Tools
 - [Vulkan SDK](https://www.lunarg.com/vulkan-sdk/) (for sure)
 - [AMD's Vulkan Memory Allocator](https://gpuopen.com/gaming-product/vulkan-memory-allocator/) (that default pool is like .. Oh My God)
